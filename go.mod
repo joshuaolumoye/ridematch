@@ -62,8 +62,8 @@ replace (
 	golang.org/x/tools => github.com/golang/tools v0.6.0
 	google.golang.org/protobuf => github.com/protocolbuffers/protobuf-go v1.34.0
 	gopkg.in/check.v1 => github.com/go-check/check v0.0.0-20161208181325-20d25e280405
-	gopkg.in/yaml.v2 => github.com/go-yaml/yaml v2.2.8+incompatible
-	gopkg.in/yaml.v3 => github.com/go-yaml/yaml v3.0.1+incompatible
+	gopkg.in/yaml.v2 => github.com/go-yaml/yaml/v2 v2.2.8
+	gopkg.in/yaml.v3 => github.com/go-yaml/yaml/v3 v3.0.1
 	gorm.io/driver/mysql => github.com/go-gorm/mysql v1.5.6
 	gorm.io/gorm => github.com/go-gorm/gorm v1.25.9
 )
