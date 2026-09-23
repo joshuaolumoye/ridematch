@@ -868,6 +868,7 @@ func (s *TripService) toTripResponse(ctx context.Context, trip *models.Trip) dto
 			Name:     trip.Passenger.Name,
 			PhotoURL: trip.Passenger.PhotoURL,
 			Phone:    trip.Passenger.Phone,
+			Email:    trip.Passenger.Email,
 			Rating:   trip.Passenger.RatingAverage,
 		}
 	}
@@ -881,6 +882,7 @@ func (s *TripService) toTripResponse(ctx context.Context, trip *models.Trip) dto
 			info.Name = trip.Driver.User.Name
 			info.PhotoURL = trip.Driver.User.PhotoURL
 			info.Phone = trip.Driver.User.Phone
+			info.Email = trip.Driver.User.Email
 		}
 		resp.DriverInfo = info
 	}

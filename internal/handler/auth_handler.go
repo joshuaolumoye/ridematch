@@ -11,7 +11,7 @@ import (
 	"ridematch-backend/internal/utils"
 )
 
-// AuthHandler exposes phone + OTP authentication endpoints.
+// AuthHandler exposes phone/email + OTP authentication endpoints.
 type AuthHandler struct {
 	auth *service.AuthService
 }
@@ -24,23 +24,23 @@ func NewAuthHandler(auth *service.AuthService) *AuthHandler {
 // RequestOTP godoc
 //
 //	@Summary		Request a login/registration OTP
-//	@Description	Sends a 6-digit one-time code by SMS to the given Nigerian phone number. Used for both first-time registration and subsequent logins — the same endpoint covers both. Subject to a resend cooldown (default 60s) per phone number.
+//	@Description	Sends a 6-digit one-time code to the given identifier — a Nigerian phone number (by SMS) or an email address (by email), detected automatically. Used for both first-time registration and subsequent logins — the same endpoint covers both. Subject to a resend cooldown (default 60s) per identifier.
 //	@Tags			Auth
 //	@Accept			json
 //	@Produce		json
-//	@Param			request	body		dto.RequestOTPRequest	true	"Phone number to send the code to"
+//	@Param			request	body		dto.RequestOTPRequest	true	"Phone number or email address to send the code to"
 //	@Success		200		{object}	utils.APIResponse{data=dto.RequestOTPResponse}
-//	@Failure		400		{object}	utils.APIResponse	"Invalid phone number format"
+//	@Failure		400		{object}	utils.APIResponse	"Invalid phone number/email format"
 //	@Failure		429		{object}	utils.APIResponse	"Resend cooldown still active"
 //	@Router			/auth/otp/request [post]
 func (h *AuthHandler) RequestOTP(c *gin.Context) {
 	var req dto.RequestOTPRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Fail(c, http.StatusBadRequest, "phone is required")
+		utils.Fail(c, http.StatusBadRequest, "a phone number or email address is required")
 		return
 	}
 
-	resp, err := h.auth.RequestOTP(c.Request.Context(), req.Phone)
+	resp, err := h.auth.RequestOTP(c.Request.Context(), req.Identifier)
 	if err != nil {
 		handleServiceError(c, err)
 		return
@@ -52,11 +52,11 @@ func (h *AuthHandler) RequestOTP(c *gin.Context) {
 // VerifyOTP godoc
 //
 //	@Summary		Verify an OTP and obtain access/refresh tokens
-//	@Description	Verifies the 6-digit code sent to a phone number. If no account exists for the phone number yet, one is created automatically (pass `name` on first verification). Returns a JWT access token and an opaque refresh token.
+//	@Description	Verifies the 6-digit code sent to a phone number or email address. If no account exists for that identifier yet, one is created automatically (pass `name` on first verification). Returns a JWT access token and an opaque refresh token.
 //	@Tags			Auth
 //	@Accept			json
 //	@Produce		json
-//	@Param			request	body		dto.VerifyOTPRequest	true	"Phone, code, and optional name for new accounts"
+//	@Param			request	body		dto.VerifyOTPRequest	true	"Identifier, code, and optional name for new accounts"
 //	@Success		200		{object}	utils.APIResponse{data=dto.VerifyOTPResponse}
 //	@Failure		400		{object}	utils.APIResponse	"Missing/invalid fields, incorrect or expired code"
 //	@Failure		403		{object}	utils.APIResponse	"Account suspended or banned"
@@ -65,11 +65,11 @@ func (h *AuthHandler) RequestOTP(c *gin.Context) {
 func (h *AuthHandler) VerifyOTP(c *gin.Context) {
 	var req dto.VerifyOTPRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Fail(c, http.StatusBadRequest, "phone and a 6-digit code are required")
+		utils.Fail(c, http.StatusBadRequest, "an identifier and a 6-digit code are required")
 		return
 	}
 
-	resp, err := h.auth.VerifyOTP(c.Request.Context(), req.Phone, req.Code, req.Name)
+	resp, err := h.auth.VerifyOTP(c.Request.Context(), req.Identifier, req.Code, req.Name)
 	if err != nil {
 		handleServiceError(c, err)
 		return

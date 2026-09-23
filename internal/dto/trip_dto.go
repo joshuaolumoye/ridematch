@@ -54,9 +54,13 @@ type TripResponse struct {
 // TripPartyInfo is the minimal identifying info shared between a matched
 // passenger and driver.
 type TripPartyInfo struct {
-	Name        string  `json:"name"`
-	PhotoURL    string  `json:"photo_url,omitempty"`
-	Phone       string  `json:"phone,omitempty"`
+	Name     string `json:"name"`
+	PhotoURL string `json:"photo_url,omitempty"`
+	Phone    string `json:"phone,omitempty"`
+	// Email is only populated when this party has no phone on file (they
+	// signed up with email instead) — a fallback contact channel so the
+	// other party still has some way to reach them.
+	Email       string  `json:"email,omitempty"`
 	VehicleType string  `json:"vehicle_type,omitempty"`
 	PlateNumber string  `json:"plate_number,omitempty"`
 	Rating      float64 `json:"rating,omitempty"`

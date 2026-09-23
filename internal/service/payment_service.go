@@ -87,12 +87,20 @@ func (s *PaymentService) InitiateSubscriptionCheckout(ctx context.Context, drive
 
 	txRef := "sub_" + uuid.NewString()
 
-	// Flutterwave requires a customer email; phone-only Nigerian users
-	// commonly don't have one on file, so we synthesize a stable,
-	// non-deliverable placeholder from their phone number. It's only
-	// used to populate the hosted checkout page and Flutterwave's own
-	// receipt — never relied on for anything in this app.
-	email := profile.User.Phone + "@ridematch.local"
+	// Flutterwave requires a customer email. Use the driver's real one if
+	// they signed up with email; otherwise (a phone-only account) it
+	// commonly has none on file, so synthesize a stable, non-deliverable
+	// placeholder instead. It's only used to populate the hosted checkout
+	// page and Flutterwave's own receipt — never relied on for anything
+	// in this app.
+	email := profile.User.Email
+	if email == "" {
+		key := profile.User.Phone
+		if key == "" {
+			key = profile.User.ID
+		}
+		email = key + "@ridematch.local"
+	}
 
 	paymentLink, err := s.gateway.InitiatePayment(ctx, flutterwave.InitiatePaymentRequest{
 		TxRef:       txRef,

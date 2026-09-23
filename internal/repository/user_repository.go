@@ -18,12 +18,16 @@ import (
 // than depending on gorm.ErrRecordNotFound directly.
 var ErrNotFound = errors.New("repository: record not found")
 
-// UserRepository defines persistence operations for User accounts.
+// UserRepository defines persistence operations for User accounts. A user
+// authenticates with exactly one of Phone or Email (see models.User), so
+// every identifier-based lookup comes in a phone and an email variant.
 type UserRepository interface {
 	Create(ctx context.Context, user *models.User) error
 	FindByID(ctx context.Context, id string) (*models.User, error)
 	FindByPhone(ctx context.Context, phone string) (*models.User, error)
 	ExistsByPhone(ctx context.Context, phone string) (bool, error)
+	FindByEmail(ctx context.Context, email string) (*models.User, error)
+	ExistsByEmail(ctx context.Context, email string) (bool, error)
 	Update(ctx context.Context, user *models.User) error
 
 	// Delete soft-deletes the user (GORM sets deleted_at; the row and its
@@ -65,7 +69,7 @@ func (r *userRepository) FindByPhone(ctx context.Context, phone string) (*models
 	var user models.User
 	err := r.db.WithContext(ctx).
 		Preload("DriverProfile").
-		First(&user, "phone = ?", phone).Error
+		First(&user, "phone = ? AND phone != ''", phone).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, ErrNotFound
 	}
@@ -78,7 +82,29 @@ func (r *userRepository) FindByPhone(ctx context.Context, phone string) (*models
 func (r *userRepository) ExistsByPhone(ctx context.Context, phone string) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&models.User{}).
-		Where("phone = ?", phone).
+		Where("phone = ? AND phone != ''", phone).
+		Count(&count).Error
+	return count > 0, err
+}
+
+func (r *userRepository) FindByEmail(ctx context.Context, email string) (*models.User, error) {
+	var user models.User
+	err := r.db.WithContext(ctx).
+		Preload("DriverProfile").
+		First(&user, "email = ? AND email != ''", email).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (r *userRepository) ExistsByEmail(ctx context.Context, email string) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&models.User{}).
+		Where("email = ? AND email != ''", email).
 		Count(&count).Error
 	return count > 0, err
 }

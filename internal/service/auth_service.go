@@ -8,19 +8,21 @@ import (
 	"time"
 
 	"ridematch-backend/internal/dto"
+	"ridematch-backend/internal/email"
 	"ridematch-backend/internal/models"
 	"ridematch-backend/internal/repository"
 	"ridematch-backend/internal/sms"
 	"ridematch-backend/internal/utils"
 )
 
-// AuthService implements phone + OTP registration/login, and JWT access /
-// opaque refresh token issuance and rotation.
+// AuthService implements phone/email + OTP registration/login, and JWT
+// access / opaque refresh token issuance and rotation.
 type AuthService struct {
 	users       repository.UserRepository
 	otps        repository.OTPRepository
 	tokens      repository.RefreshTokenRepository
-	sender      sms.Sender
+	smsSender   sms.Sender
+	emailSender email.Sender
 	jwt         *utils.JWTManager
 	otpTTL      time.Duration
 	otpLen      int
@@ -33,7 +35,8 @@ func NewAuthService(
 	users repository.UserRepository,
 	otps repository.OTPRepository,
 	tokens repository.RefreshTokenRepository,
-	sender sms.Sender,
+	smsSender sms.Sender,
+	emailSender email.Sender,
 	jwtManager *utils.JWTManager,
 	otpTTL time.Duration,
 	otpLength int,
@@ -44,7 +47,8 @@ func NewAuthService(
 		users:       users,
 		otps:        otps,
 		tokens:      tokens,
-		sender:      sender,
+		smsSender:   smsSender,
+		emailSender: emailSender,
 		jwt:         jwtManager,
 		otpTTL:      otpTTL,
 		otpLen:      otpLength,
@@ -53,15 +57,17 @@ func NewAuthService(
 	}
 }
 
-// RequestOTP normalizes the phone number, enforces the resend cooldown,
-// generates and stores a hashed OTP code, and dispatches it by SMS.
-func (s *AuthService) RequestOTP(ctx context.Context, rawPhone string) (*dto.RequestOTPResponse, error) {
-	phone, err := utils.NormalizePhone(rawPhone)
+// RequestOTP normalizes the identifier (a Nigerian phone number or an
+// email address — detected automatically), enforces the resend cooldown,
+// generates and stores a hashed OTP code, and dispatches it over the
+// matching channel (SMS or email).
+func (s *AuthService) RequestOTP(ctx context.Context, rawIdentifier string) (*dto.RequestOTPResponse, error) {
+	identifier, channel, err := utils.NormalizeIdentifier(rawIdentifier)
 	if err != nil {
 		return nil, err
 	}
 
-	if last, err := s.otps.FindLatestAny(ctx, phone, models.OTPPurposeLogin); err == nil {
+	if last, err := s.otps.FindLatestAny(ctx, identifier, models.OTPPurposeLogin); err == nil {
 		if time.Since(last.CreatedAt) < s.cooldown {
 			return nil, ErrOTPCooldown
 		}
@@ -79,8 +85,14 @@ func (s *AuthService) RequestOTP(ctx context.Context, rawPhone string) (*dto.Req
 		return nil, err
 	}
 
+	otpChannel := models.OTPChannelPhone
+	if channel == utils.ChannelEmail {
+		otpChannel = models.OTPChannelEmail
+	}
+
 	otp := &models.OTPRequest{
-		Phone:       phone,
+		Identifier:  identifier,
+		Channel:     otpChannel,
 		CodeHash:    hash,
 		Purpose:     models.OTPPurposeLogin,
 		ExpiresAt:   time.Now().Add(s.otpTTL),
@@ -90,28 +102,45 @@ func (s *AuthService) RequestOTP(ctx context.Context, rawPhone string) (*dto.Req
 		return nil, fmt.Errorf("service: failed to persist otp: %w", err)
 	}
 
-	message := sms.BuildOTPMessage(code, int(s.otpTTL.Minutes()))
-	if err := s.sender.Send(ctx, phone, message); err != nil {
-		return nil, fmt.Errorf("service: failed to send otp sms: %w", err)
+	if err := s.dispatchOTP(ctx, identifier, channel, code); err != nil {
+		return nil, err
 	}
 
 	return &dto.RequestOTPResponse{
-		Phone:            phone,
+		Identifier:       identifier,
+		Channel:          string(channel),
 		ExpiresInSeconds: int(s.otpTTL.Seconds()),
 		ResendInSeconds:  int(s.cooldown.Seconds()),
 	}, nil
 }
 
+// dispatchOTP sends the code over the right channel.
+func (s *AuthService) dispatchOTP(ctx context.Context, identifier string, channel utils.Channel, code string) error {
+	if channel == utils.ChannelEmail {
+		subject, body := email.BuildOTPEmail(code, int(s.otpTTL.Minutes()))
+		if err := s.emailSender.Send(ctx, identifier, subject, body); err != nil {
+			return fmt.Errorf("service: failed to send otp email: %w", err)
+		}
+		return nil
+	}
+
+	message := sms.BuildOTPMessage(code, int(s.otpTTL.Minutes()))
+	if err := s.smsSender.Send(ctx, identifier, message); err != nil {
+		return fmt.Errorf("service: failed to send otp sms: %w", err)
+	}
+	return nil
+}
+
 // VerifyOTP validates a submitted code against the most recent active
-// challenge for the phone number. On success it finds-or-creates the
-// User account and issues a fresh access/refresh token pair.
-func (s *AuthService) VerifyOTP(ctx context.Context, rawPhone, code, name string) (*dto.VerifyOTPResponse, error) {
-	phone, err := utils.NormalizePhone(rawPhone)
+// challenge for the identifier. On success it finds-or-creates the User
+// account and issues a fresh access/refresh token pair.
+func (s *AuthService) VerifyOTP(ctx context.Context, rawIdentifier, code, name string) (*dto.VerifyOTPResponse, error) {
+	identifier, channel, err := utils.NormalizeIdentifier(rawIdentifier)
 	if err != nil {
 		return nil, err
 	}
 
-	otp, err := s.otps.FindLatestActive(ctx, phone, models.OTPPurposeLogin)
+	otp, err := s.otps.FindLatestActive(ctx, identifier, models.OTPPurposeLogin)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrOTPNotFound
@@ -138,7 +167,7 @@ func (s *AuthService) VerifyOTP(ctx context.Context, rawPhone, code, name string
 		return nil, fmt.Errorf("service: failed to consume otp: %w", err)
 	}
 
-	user, isNew, err := s.findOrCreateUser(ctx, phone, name)
+	user, isNew, err := s.findOrCreateUser(ctx, channel, identifier, name)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +188,14 @@ func (s *AuthService) VerifyOTP(ctx context.Context, rawPhone, code, name string
 	}, nil
 }
 
-func (s *AuthService) findOrCreateUser(ctx context.Context, phone, name string) (*models.User, bool, error) {
+func (s *AuthService) findOrCreateUser(ctx context.Context, channel utils.Channel, identifier, name string) (*models.User, bool, error) {
+	if channel == utils.ChannelEmail {
+		return s.findOrCreateUserByEmail(ctx, identifier, name)
+	}
+	return s.findOrCreateUserByPhone(ctx, identifier, name)
+}
+
+func (s *AuthService) findOrCreateUserByPhone(ctx context.Context, phone, name string) (*models.User, bool, error) {
 	user, err := s.users.FindByPhone(ctx, phone)
 	if err == nil {
 		now := time.Now()
@@ -182,6 +218,36 @@ func (s *AuthService) findOrCreateUser(ctx context.Context, phone, name string) 
 		Role:            models.RoleUser,
 		Status:          models.StatusActive,
 		PhoneVerifiedAt: &now,
+	}
+	if err := s.users.Create(ctx, newUser); err != nil {
+		return nil, false, fmt.Errorf("service: failed to create user: %w", err)
+	}
+	return newUser, true, nil
+}
+
+func (s *AuthService) findOrCreateUserByEmail(ctx context.Context, emailAddr, name string) (*models.User, bool, error) {
+	user, err := s.users.FindByEmail(ctx, emailAddr)
+	if err == nil {
+		now := time.Now()
+		if user.EmailVerifiedAt == nil {
+			user.EmailVerifiedAt = &now
+			if err := s.users.Update(ctx, user); err != nil {
+				return nil, false, fmt.Errorf("service: failed to mark email verified: %w", err)
+			}
+		}
+		return user, false, nil
+	}
+	if !errors.Is(err, repository.ErrNotFound) {
+		return nil, false, fmt.Errorf("service: failed to look up user: %w", err)
+	}
+
+	now := time.Now()
+	newUser := &models.User{
+		Email:           emailAddr,
+		Name:            name,
+		Role:            models.RoleUser,
+		Status:          models.StatusActive,
+		EmailVerifiedAt: &now,
 	}
 	if err := s.users.Create(ctx, newUser); err != nil {
 		return nil, false, fmt.Errorf("service: failed to create user: %w", err)
@@ -287,8 +353,8 @@ func (s *AuthService) Me(ctx context.Context, userID string) (*dto.UserResponse,
 
 // UpdateProfile applies the caller's requested changes to their own name
 // and/or photo. Both fields are optional and independent — a nil field in
-// the request leaves that column untouched, so a client can update just
-// the photo without resending the name (and vice versa).
+// the request leaves that column untouched (so a client can update just
+// the photo without resending the name, and vice versa).
 func (s *AuthService) UpdateProfile(ctx context.Context, userID string, req dto.UpdateProfileRequest) (*dto.UserResponse, error) {
 	user, err := s.users.FindByID(ctx, userID)
 	if err != nil {
@@ -314,14 +380,14 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, req dto.
 }
 
 // DeleteAccount permanently ends the caller's session everywhere (all
-// refresh tokens revoked) and soft-deletes the account. The phone number
-// and name/photo are scrubbed first — a soft-deleted row otherwise still
-// occupies the unique phone index (blocking that number from ever
-// registering again) and still exposes PII to anything that reads it
-// with Unscoped(). Trip/rating history referencing this user is left
-// alone: the other party's records shouldn't disappear because this
-// account did, and GORM's default soft-delete scoping already excludes
-// the deleted user from every normal query and preload.
+// refresh tokens revoked) and soft-deletes the account. The identifying
+// fields (phone, email, name/photo) are scrubbed first — a soft-deleted
+// row otherwise still occupies those lookup indexes (blocking that phone
+// number or email from ever registering again) and still exposes PII to
+// anything that reads it with Unscoped(). Trip/rating history referencing
+// this user is left alone: the other party's records shouldn't disappear
+// because this account did, and GORM's default soft-delete scoping
+// already excludes the deleted user from every normal query and preload.
 func (s *AuthService) DeleteAccount(ctx context.Context, userID string) error {
 	user, err := s.users.FindByID(ctx, userID)
 	if err != nil {
@@ -331,11 +397,19 @@ func (s *AuthService) DeleteAccount(ctx context.Context, userID string) error {
 		return fmt.Errorf("service: failed to load user: %w", err)
 	}
 
-	// Phone is varchar(20) — same width as a real E.164 number — so the
-	// scrubbed value has to fit that, not just be unique. 18 hex chars
-	// (72 bits) of the user's own UUID, minus its dashes, comfortably
-	// avoids collisions within that budget.
-	user.Phone = "d:" + strings.ReplaceAll(user.ID, "-", "")[:18]
+	// Both scrubbed values need to be unique across every other
+	// soft-deleted account too (see the comment on models.User about why
+	// Phone/Email aren't DB-unique) — derived from the user's own UUID,
+	// which already is. Phone is varchar(20) — same width as a real
+	// E.164 number — so only 18 hex chars (72 bits) fit; that comfortably
+	// avoids collisions within that budget. Email has room to spare.
+	scrubID := strings.ReplaceAll(user.ID, "-", "")
+	if user.Phone != "" {
+		user.Phone = "d:" + scrubID[:18]
+	}
+	if user.Email != "" {
+		user.Email = "deleted+" + scrubID + "@ridematch.invalid"
+	}
 	user.Name = "Deleted user"
 	user.PhotoURL = ""
 	if err := s.users.Update(ctx, user); err != nil {
@@ -357,6 +431,7 @@ func toUserResponse(user *models.User) dto.UserResponse {
 	return dto.UserResponse{
 		ID:            user.ID,
 		Phone:         user.Phone,
+		Email:         user.Email,
 		Name:          user.Name,
 		PhotoURL:      user.PhotoURL,
 		Role:          string(user.Role),

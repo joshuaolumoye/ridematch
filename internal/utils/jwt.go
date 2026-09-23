@@ -21,7 +21,8 @@ var ErrInvalidToken = errors.New("utils: invalid or expired token")
 // round-trip on every call.
 type AccessClaims struct {
 	UserID string          `json:"uid"`
-	Phone  string          `json:"phone"`
+	Phone  string          `json:"phone,omitempty"`
+	Email  string          `json:"email,omitempty"`
 	Role   models.UserRole `json:"role"`
 	jwt.RegisteredClaims
 }
@@ -53,6 +54,7 @@ func (m *JWTManager) GenerateAccessToken(user *models.User) (string, time.Time, 
 	claims := AccessClaims{
 		UserID: user.ID,
 		Phone:  user.Phone,
+		Email:  user.Email,
 		Role:   user.Role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    m.issuer,

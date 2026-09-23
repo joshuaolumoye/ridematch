@@ -1,11 +1,11 @@
 # RideMatch API
 
 Backend for RideMatch — a multi-modal (car, okada, keke, bus) ride/logistics
-matching platform for Nigeria. Phone + OTP authentication, no in-app
-payment for trip fares (drivers pay a flat daily platform-access fee via
-Flutterwave instead).
+matching platform for Nigeria. Phone-or-email + OTP authentication (no
+passwords), no in-app payment for trip fares (drivers pay a flat daily
+platform-access fee via Flutterwave instead).
 
-This milestone covers **Phase 1: authentication** — phone/OTP
+This milestone covers **Phase 1: authentication** — phone/email OTP
 registration+login, JWT access tokens, rotating refresh tokens, and the
 driver/user data model foundation. Matching, live location, negotiation,
 and payment webhooks are follow-on milestones.
@@ -51,10 +51,14 @@ internal/
   flutterwave/      minimal Flutterwave v3 API client (checkout link
                     creation + server-side transaction verification)
   utils/            JWT issuance/parsing, OTP generation/hashing, phone
-                    normalization, token hashing, the shared JSON response
-                    envelope helper
+                    normalization, phone-vs-email identifier detection,
+                    token hashing, the shared JSON response envelope helper
   sms/              SMS sender interface — console logger for local dev,
                     Termii implementation for production
+  email/            Email sender interface — console logger for local dev,
+                    stdlib-only SMTP implementation (Hostinger, Gmail,
+                    Zoho, SES SMTP, or any other standard mailbox) for
+                    production
 scripts/
   trip_lifecycle_test.py      end-to-end smoke test (REST + WebSocket +
                                concurrency race test) against a running server
@@ -69,10 +73,16 @@ scripts/
 - **Repository pattern**: handlers never touch GORM. `handler` calls
   `service`, `service` calls `repository` interfaces. To swap MySQL for
   something else later, only `internal/repository` changes.
-- **No passwords.** Auth is phone number + OTP only. `POST
-  /auth/otp/verify` handles both first-time registration and every
-  subsequent login through the same endpoint — if the phone number has no
-  account yet, one is created automatically.
+- **No passwords.** Auth is a phone number *or* an email address + OTP —
+  `POST /auth/otp/request` and `/auth/otp/verify` take a single
+  `identifier` field, detect which kind it is (contains "@" → email,
+  otherwise validated as a Nigerian phone number), and dispatch the code
+  over the matching channel (SMS or email). `/auth/otp/verify` handles
+  both first-time registration and every subsequent login through the
+  same endpoint — if the identifier has no account yet, one is created
+  automatically. An account is keyed by whichever identifier it signed up
+  with; `models.User` has both `Phone` and `Email` columns but normally
+  only one is populated per account.
 - **Refresh token rotation.** Refresh tokens are random opaque strings
   (not JWTs), stored server-side as a SHA-256 hash so a database leak
   doesn't hand out usable tokens. Every `POST /auth/token/refresh` call
@@ -117,16 +127,20 @@ docs are at **http://localhost:8080/docs**.
 
 ### Local OTP testing
 
-With `SMS_PROVIDER=console` (the default), OTP codes are printed to the
-server log instead of sent as real SMS:
+With `SMS_PROVIDER=console` and `EMAIL_PROVIDER=console` (both the
+default), OTP codes are printed to the server log instead of sent as real
+SMS/email:
 
 ```
 [SMS -> +2348012345678] Your RideMatch verification code is 238413. ...
+[EMAIL -> josh@example.com] Your RideMatch verification code is 238413. ...
 ```
 
 Copy that code into `POST /auth/otp/verify` to complete the flow without
-an SMS account. Switch to `SMS_PROVIDER=termii` and set `TERMII_API_KEY`
-to send real SMS in production.
+an SMS/email account. Switch to `SMS_PROVIDER=termii` (+ `TERMII_API_KEY`)
+and `EMAIL_PROVIDER=smtp` (+ the `SMTP_*` settings — see `.env.example`
+for the exact values a Hostinger mailbox needs) to send real messages in
+production.
 
 ## API overview
 
@@ -136,7 +150,7 @@ is served at `/docs`. Summary:
 | Method | Path                      | Auth | Description |
 |--------|---------------------------|------|--------------|
 | GET    | `/health`                 | —    | Liveness check |
-| POST   | `/api/v1/auth/otp/request`| —    | Send a 6-digit OTP by SMS |
+| POST   | `/api/v1/auth/otp/request`| —    | Send a 6-digit OTP by SMS or email (auto-detected from `identifier`) |
 | POST   | `/api/v1/auth/otp/verify` | —    | Verify OTP; creates account on first use; returns tokens |
 | POST   | `/api/v1/auth/token/refresh` | — | Rotate a refresh token for a new pair |
 | POST   | `/api/v1/auth/logout`     | —    | Revoke a refresh token |
@@ -337,6 +351,8 @@ directly updating a row:
 
 ```sql
 UPDATE users SET role = 'admin' WHERE phone = '+234XXXXXXXXXX';
+-- or, for an account that signed up with email instead of phone:
+UPDATE users SET role = 'admin' WHERE email = 'you@example.com';
 ```
 
 The user then needs to **log in again** (`/auth/otp/verify`) to get a

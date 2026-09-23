@@ -7,16 +7,31 @@ import "time"
 type OTPPurpose string
 
 const (
-	OTPPurposeLogin OTPPurpose = "login" // covers both registration and login: one flow, phone + OTP
+	OTPPurposeLogin OTPPurpose = "login" // covers both registration and login: one flow, identifier + OTP
 )
 
-// OTPRequest is a one-time-password challenge sent to a phone number.
-// Only a bcrypt hash of the code is stored, never the plaintext, so a
-// database leak doesn't hand out valid codes.
+// OTPChannel says how a code was delivered. Deliberately a separate type
+// from utils.Channel (rather than importing it) — internal/utils already
+// imports internal/models (for JWT claims), so importing utils back here
+// would be a cycle; the two types share the same two string values and
+// AuthService converts between them at the one call site that needs to.
+type OTPChannel string
+
+const (
+	OTPChannelPhone OTPChannel = "phone"
+	OTPChannelEmail OTPChannel = "email"
+)
+
+// OTPRequest is a one-time-password challenge sent to a phone number or
+// email address. Only a bcrypt hash of the code is stored, never the
+// plaintext, so a database leak doesn't hand out valid codes.
 type OTPRequest struct {
 	Base
 
-	Phone       string     `gorm:"type:varchar(20);index;not null" json:"phone"`
+	// Identifier is the normalized phone number (+234...) or email
+	// address (lowercased) the code was sent to; Channel says which.
+	Identifier  string     `gorm:"column:identifier;type:varchar(255);index;not null" json:"identifier"`
+	Channel     OTPChannel `gorm:"type:varchar(10);not null;default:'phone'" json:"channel"`
 	CodeHash    string     `gorm:"type:varchar(100);not null" json:"-"`
 	Purpose     OTPPurpose `gorm:"type:varchar(20);not null" json:"purpose"`
 	ExpiresAt   time.Time  `gorm:"not null" json:"expires_at"`

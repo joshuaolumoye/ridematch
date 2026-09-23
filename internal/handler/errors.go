@@ -26,6 +26,8 @@ var errorStatusMap = map[error]int{
 	service.ErrAccountBanned:       http.StatusForbidden,
 	service.ErrInvalidRefreshToken: http.StatusUnauthorized,
 	utils.ErrInvalidPhone:          http.StatusBadRequest,
+	utils.ErrInvalidEmail:          http.StatusBadRequest,
+	utils.ErrInvalidIdentifier:     http.StatusBadRequest,
 
 	service.ErrDriverProfileNotFound:   http.StatusNotFound,
 	service.ErrDriverAlreadyRegistered: http.StatusConflict,

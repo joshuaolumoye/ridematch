@@ -59,6 +59,18 @@ type Config struct {
 	TermiiAPIKey   string
 	TermiiSenderID string
 
+	// EmailProvider picks how OTP codes and other transactional email get
+	// sent: "console" (default, logs to stdout — no credentials needed)
+	// or "smtp", which delivers via the SMTP_* settings below against any
+	// standard mailbox (Hostinger, Gmail, Zoho, Amazon SES SMTP, ...).
+	EmailProvider   string
+	SMTPHost        string
+	SMTPPort        string
+	SMTPUsername    string
+	SMTPPassword    string
+	SMTPFromAddress string
+	SMTPFromName    string
+
 	FlutterwaveSecretKey   string
 	FlutterwavePublicKey   string
 	FlutterwaveWebhookKey  string
@@ -151,6 +163,14 @@ func Load() *Config {
 		SMSProvider:    getEnv("SMS_PROVIDER", "console"),
 		TermiiAPIKey:   getEnv("TERMII_API_KEY", ""),
 		TermiiSenderID: getEnv("TERMII_SENDER_ID", "RideMatch"),
+
+		EmailProvider:   getEnv("EMAIL_PROVIDER", "console"),
+		SMTPHost:        getEnv("SMTP_HOST", ""),
+		SMTPPort:        getEnv("SMTP_PORT", "587"),
+		SMTPUsername:    getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:    getEnv("SMTP_PASSWORD", ""),
+		SMTPFromAddress: getEnv("SMTP_FROM_ADDRESS", ""),
+		SMTPFromName:    getEnv("SMTP_FROM_NAME", "RideMatch"),
 
 		FlutterwaveSecretKey:   getEnv("FLW_SECRET_KEY", ""),
 		FlutterwavePublicKey:   getEnv("FLW_PUBLIC_KEY", ""),

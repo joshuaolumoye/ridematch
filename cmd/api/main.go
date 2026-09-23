@@ -6,6 +6,7 @@ import (
 
 	"ridematch-backend/internal/config"
 	"ridematch-backend/internal/database"
+	"ridematch-backend/internal/email"
 	"ridematch-backend/internal/flutterwave"
 	"ridematch-backend/internal/handler"
 	"ridematch-backend/internal/repository"
@@ -52,10 +53,21 @@ func main() {
 		smsSender = sms.NewConsoleSender()
 	}
 
+	// Email provider — console logging by default, real SMTP delivery
+	// (Hostinger or any other mailbox) once EMAIL_PROVIDER=smtp and the
+	// SMTP_* settings are configured.
+	var emailSender email.Sender
+	switch cfg.EmailProvider {
+	case "smtp":
+		emailSender = email.NewSMTPSender(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUsername, cfg.SMTPPassword, cfg.SMTPFromAddress, cfg.SMTPFromName)
+	default:
+		emailSender = email.NewConsoleSender()
+	}
+
 	jwtManager := utils.NewJWTManager(cfg.JWTAccessSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
 
 	authService := service.NewAuthService(
-		userRepo, otpRepo, tokenRepo, smsSender, jwtManager,
+		userRepo, otpRepo, tokenRepo, smsSender, emailSender, jwtManager,
 		cfg.OTPTTL, cfg.OTPLength, cfg.OTPResendCooldown, cfg.OTPMaxAttempts,
 	)
 	driverService := service.NewDriverService(

@@ -16,6 +16,7 @@ import (
 const (
 	ContextUserID = "auth_user_id"
 	ContextPhone  = "auth_phone"
+	ContextEmail  = "auth_email"
 	ContextRole   = "auth_role"
 )
 
@@ -47,6 +48,7 @@ func RequireAuth(jwtManager *utils.JWTManager) gin.HandlerFunc {
 
 		c.Set(ContextUserID, claims.UserID)
 		c.Set(ContextPhone, claims.Phone)
+		c.Set(ContextEmail, claims.Email)
 		c.Set(ContextRole, string(claims.Role))
 		c.Next()
 	}
