@@ -18,6 +18,14 @@ import (
 // than depending on gorm.ErrRecordNotFound directly.
 var ErrNotFound = errors.New("repository: record not found")
 
+// UserFilter narrows an admin user listing. Zero-value fields are ignored.
+type UserFilter struct {
+	Role   string // "user" | "driver" | "admin"
+	Status string // "active" | "suspended" | "banned"
+	// Query matches name, phone, or email (case-insensitive substring).
+	Query string
+}
+
 // UserRepository defines persistence operations for User accounts. A user
 // authenticates with exactly one of Phone or Email (see models.User), so
 // every identifier-based lookup comes in a phone and an email variant.
@@ -29,6 +37,17 @@ type UserRepository interface {
 	FindByEmail(ctx context.Context, email string) (*models.User, error)
 	ExistsByEmail(ctx context.Context, email string) (bool, error)
 	Update(ctx context.Context, user *models.User) error
+
+	// FindAll returns a filtered, paginated page of users (newest first)
+	// plus the total matching count, for the admin users list.
+	FindAll(ctx context.Context, filter UserFilter, limit, offset int) ([]models.User, int64, error)
+
+	// Count returns the total number of accounts, ignoring soft-deletes.
+	Count(ctx context.Context) (int64, error)
+
+	// CountByStatus groups accounts by UserStatus, for the dashboard's
+	// "suspended accounts" stat.
+	CountByStatus(ctx context.Context) (map[string]int64, error)
 
 	// Delete soft-deletes the user (GORM sets deleted_at; the row and its
 	// history — trips, ratings — are kept for the other party's records,
@@ -115,4 +134,64 @@ func (r *userRepository) Update(ctx context.Context, user *models.User) error {
 
 func (r *userRepository) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Delete(&models.User{}, "id = ?", id).Error
+}
+
+func (r *userRepository) filtered(ctx context.Context, filter UserFilter) *gorm.DB {
+	q := r.db.WithContext(ctx).Model(&models.User{})
+
+	if filter.Role != "" {
+		q = q.Where("role = ?", filter.Role)
+	}
+	if filter.Status != "" {
+		q = q.Where("status = ?", filter.Status)
+	}
+	if filter.Query != "" {
+		like := "%" + filter.Query + "%"
+		q = q.Where("name LIKE ? OR phone LIKE ? OR email LIKE ?", like, like, like)
+	}
+	return q
+}
+
+func (r *userRepository) FindAll(ctx context.Context, filter UserFilter, limit, offset int) ([]models.User, int64, error) {
+	var total int64
+	if err := r.filtered(ctx, filter).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var users []models.User
+	err := r.filtered(ctx, filter).
+		Preload("DriverProfile").
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&users).Error
+	if err != nil {
+		return nil, 0, err
+	}
+	return users, total, nil
+}
+
+func (r *userRepository) Count(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&models.User{}).Count(&count).Error
+	return count, err
+}
+
+func (r *userRepository) CountByStatus(ctx context.Context) (map[string]int64, error) {
+	var rows []struct {
+		Status string
+		Count  int64
+	}
+	err := r.db.WithContext(ctx).Model(&models.User{}).
+		Select("status, COUNT(*) AS count").
+		Group("status").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		result[row.Status] = row.Count
+	}
+	return result, nil
 }

@@ -51,6 +51,12 @@ type LocationRepository interface {
 	// last-seen timestamp is older than `staleAfter`. Stale entries found
 	// during the scan are lazily evicted from the geo index.
 	FindNearby(ctx context.Context, vehicleType models.VehicleType, lat, lng, radiusKM float64, limit int, staleAfter time.Duration) ([]NearbyDriver, error)
+
+	// ListOnline returns every fresh (not stale) online driver of the
+	// given vehicle type with their live position — no radius/center
+	// needed, unlike FindNearby. Used by the admin "riders by location"
+	// map, which shows every online driver at once.
+	ListOnline(ctx context.Context, vehicleType models.VehicleType, staleAfter time.Duration) ([]NearbyDriver, error)
 }
 
 type redisLocationRepository struct {
@@ -158,6 +164,51 @@ func (r *redisLocationRepository) FindNearby(ctx context.Context, vehicleType mo
 		}
 	}
 
+	return results, nil
+}
+
+func (r *redisLocationRepository) ListOnline(ctx context.Context, vehicleType models.VehicleType, staleAfter time.Duration) ([]NearbyDriver, error) {
+	ids, err := r.client.ZRange(ctx, geoKey(vehicleType), 0, -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("repository: failed to list online drivers: %w", err)
+	}
+	if len(ids) == 0 {
+		return []NearbyDriver{}, nil
+	}
+
+	positions, err := r.client.GeoPos(ctx, geoKey(vehicleType), ids...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("repository: failed to fetch driver positions: %w", err)
+	}
+
+	lastSeen, err := r.client.HMGet(ctx, lastSeenKey, ids...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("repository: failed to check driver staleness: %w", err)
+	}
+
+	cutoff := time.Now().Add(-staleAfter).UnixMilli()
+
+	results := make([]NearbyDriver, 0, len(ids))
+	for i, id := range ids {
+		if i >= len(positions) || positions[i] == nil {
+			continue
+		}
+		fresh := false
+		if i < len(lastSeen) && lastSeen[i] != nil {
+			if ms, ok := parseUnixMillis(lastSeen[i]); ok && ms >= cutoff {
+				fresh = true
+			}
+		}
+		if !fresh {
+			_ = r.RemoveLocation(ctx, id, vehicleType)
+			continue
+		}
+		results = append(results, NearbyDriver{
+			DriverID:  id,
+			Latitude:  positions[i].Latitude,
+			Longitude: positions[i].Longitude,
+		})
+	}
 	return results, nil
 }
 

@@ -25,6 +25,8 @@ const (
 	EventTripPickedUp   = "trip.picked_up"      // -> passenger, on PIN confirmation
 	EventTripCompleted  = "trip.completed"      // -> passenger, on completion
 	EventTripCancelled  = "trip.cancelled"      // -> the other party, on cancellation
+
+	EventNotificationNew = "notification.new" // -> a user, whenever a new in-app notification is created for them
 )
 
 // Hub tracks one live connection per user and routes targeted pushes to

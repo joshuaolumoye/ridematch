@@ -33,33 +33,56 @@ import (
 type PaymentService struct {
 	payments repository.PaymentRepository
 	drivers  repository.DriverRepository
+	prices   repository.SubscriptionPriceRepository
 	admin    *AdminService
 	gateway  flutterwave.Gateway
 
-	dailyFeeKobo       int64
-	webhookSecret      string
-	defaultRedirectURL string
+	// fallbackDailyFeeKobo is used only if a vehicle type somehow has no
+	// SubscriptionPrice row (cmd/migrate seeds all four, so this is a
+	// safety net for an un-migrated/edge-case environment, not the
+	// normal path — the normal path always reads the admin-configured,
+	// per-vehicle-type price).
+	fallbackDailyFeeKobo int64
+	webhookSecret        string
+	defaultRedirectURL   string
 }
 
 // NewPaymentService constructs a PaymentService.
 func NewPaymentService(
 	payments repository.PaymentRepository,
 	drivers repository.DriverRepository,
+	prices repository.SubscriptionPriceRepository,
 	admin *AdminService,
 	gateway flutterwave.Gateway,
-	dailyFeeKobo int64,
+	fallbackDailyFeeKobo int64,
 	webhookSecret string,
 	defaultRedirectURL string,
 ) *PaymentService {
 	return &PaymentService{
-		payments:           payments,
-		drivers:            drivers,
-		admin:              admin,
-		gateway:            gateway,
-		dailyFeeKobo:       dailyFeeKobo,
-		webhookSecret:      webhookSecret,
-		defaultRedirectURL: defaultRedirectURL,
+		payments:             payments,
+		drivers:              drivers,
+		prices:               prices,
+		admin:                admin,
+		gateway:              gateway,
+		fallbackDailyFeeKobo: fallbackDailyFeeKobo,
+		webhookSecret:        webhookSecret,
+		defaultRedirectURL:   defaultRedirectURL,
 	}
+}
+
+// dailyFeeFor returns the admin-configured daily platform-access price
+// for a vehicle type — okada, keke, car, and bus each have their own,
+// set from the admin dashboard — falling back to the configured flat fee
+// if that vehicle type has no price row yet.
+func (s *PaymentService) dailyFeeFor(ctx context.Context, vehicleType models.VehicleType) int64 {
+	if s.prices == nil {
+		return s.fallbackDailyFeeKobo
+	}
+	price, err := s.prices.FindByVehicleType(ctx, vehicleType)
+	if err != nil || price == nil {
+		return s.fallbackDailyFeeKobo
+	}
+	return price.PriceKoboPerDay
 }
 
 // InitiateSubscriptionCheckout creates a Flutterwave hosted-checkout link
@@ -78,7 +101,7 @@ func (s *PaymentService) InitiateSubscriptionCheckout(ctx context.Context, drive
 	if days <= 0 {
 		days = 1
 	}
-	amountKobo := s.dailyFeeKobo * int64(days)
+	amountKobo := s.dailyFeeFor(ctx, profile.VehicleType) * int64(days)
 
 	redirectURL := req.RedirectURL
 	if redirectURL == "" {

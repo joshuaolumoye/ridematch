@@ -51,6 +51,14 @@ type User struct {
 	PhoneVerifiedAt *time.Time `json:"phone_verified_at,omitempty"`
 	EmailVerifiedAt *time.Time `json:"email_verified_at,omitempty"`
 
+	// PushToken is the device's Expo push token, registered by the app
+	// after login (see PATCH /users/me/push-token). One token per
+	// account — a login on a new device overwrites the old one, which is
+	// fine since a push failing to reach a now-inactive device is
+	// harmless (REST + the in-app notifications list are the source of
+	// truth either way).
+	PushToken string `gorm:"type:varchar(255)" json:"-"`
+
 	RatingAverage float64 `gorm:"type:decimal(3,2);default:5.00" json:"rating_average"`
 	RatingCount   int64   `gorm:"default:0" json:"rating_count"`
 

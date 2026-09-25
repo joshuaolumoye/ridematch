@@ -18,15 +18,16 @@ import (
 // Passed as a single struct so adding a new handler later doesn't change
 // New's signature.
 type Dependencies struct {
-	AuthHandler    *handler.AuthHandler
-	DriverHandler  *handler.DriverHandler
-	AdminHandler   *handler.AdminHandler
-	DocsHandler    *handler.DocsHandler
-	TripHandler    *handler.TripHandler
-	WSHandler      *handler.WSHandler
-	PaymentHandler *handler.PaymentHandler
-	UploadHandler  *handler.UploadHandler
-	JWTManager     *utils.JWTManager
+	AuthHandler         *handler.AuthHandler
+	DriverHandler       *handler.DriverHandler
+	AdminHandler        *handler.AdminHandler
+	DocsHandler         *handler.DocsHandler
+	TripHandler         *handler.TripHandler
+	WSHandler           *handler.WSHandler
+	PaymentHandler      *handler.PaymentHandler
+	UploadHandler       *handler.UploadHandler
+	NotificationHandler *handler.NotificationHandler
+	JWTManager          *utils.JWTManager
 
 	// RedisClient backs the rate limiter middleware on the
 	// trip-creation and offer-creation routes.
@@ -75,7 +76,20 @@ func New(deps Dependencies) *gin.Engine {
 		{
 			users.GET("/me", deps.AuthHandler.Me)
 			users.PATCH("/me", deps.AuthHandler.UpdateProfile)
+			users.PATCH("/me/push-token", deps.AuthHandler.RegisterPushToken)
 			users.DELETE("/me", deps.AuthHandler.DeleteAccount)
+		}
+
+		// Notifications inbox — every authenticated account (rider, driver,
+		// or admin) sees only its own notifications, scoped by JWT user ID
+		// inside the handler/service, not by a route param.
+		notifications := v1.Group("/notifications")
+		notifications.Use(authRequired)
+		{
+			notifications.GET("", deps.NotificationHandler.List)
+			notifications.GET("/unread-count", deps.NotificationHandler.UnreadCount)
+			notifications.PATCH("/:id/read", deps.NotificationHandler.MarkRead)
+			notifications.POST("/read-all", deps.NotificationHandler.MarkAllRead)
 		}
 
 		v1.POST("/uploads", authRequired, deps.UploadHandler.Create)
@@ -106,8 +120,25 @@ func New(deps Dependencies) *gin.Engine {
 		admin := v1.Group("/admin")
 		admin.Use(authRequired, middleware.RequireRole("admin"))
 		{
+			admin.GET("/overview", deps.AdminHandler.Overview)
+
+			admin.GET("/drivers", deps.AdminHandler.ListDrivers)
+			admin.GET("/drivers/locations", deps.AdminHandler.DriverLocations)
+			admin.GET("/drivers/:id", deps.AdminHandler.GetDriver)
 			admin.PATCH("/drivers/:id/verify", deps.AdminHandler.VerifyDriver)
 			admin.PATCH("/drivers/:id/subscription", deps.AdminHandler.ActivateSubscription)
+			admin.POST("/drivers/:id/notify", deps.AdminHandler.NotifyDriver)
+
+			admin.GET("/users", deps.AdminHandler.ListUsers)
+			admin.GET("/users/:id", deps.AdminHandler.GetUser)
+			admin.GET("/users/:id/trips", deps.AdminHandler.UserTrips)
+			admin.PATCH("/users/:id/status", deps.AdminHandler.UpdateAccountStatus)
+
+			admin.GET("/trips", deps.AdminHandler.ListTrips)
+			admin.GET("/trips/:id", deps.AdminHandler.GetTrip)
+
+			admin.GET("/settings/subscription-prices", deps.AdminHandler.ListSubscriptionPrices)
+			admin.PUT("/settings/subscription-prices/:vehicle_type", deps.AdminHandler.UpdateSubscriptionPrice)
 		}
 
 		// Trip lifecycle: request → negotiate → match → pickup PIN →

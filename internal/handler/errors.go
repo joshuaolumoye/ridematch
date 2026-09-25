@@ -53,6 +53,10 @@ var errorStatusMap = map[error]int{
 	service.ErrInvalidWebhookSignature:   http.StatusUnauthorized,
 	service.ErrPaymentNotFound:           http.StatusNotFound,
 	service.ErrPaymentVerificationFailed: http.StatusUnprocessableEntity,
+
+	service.ErrUserNotFound:         http.StatusNotFound,
+	service.ErrNotificationNotFound: http.StatusNotFound,
+	service.ErrInvalidVehicleType:   http.StatusBadRequest,
 }
 
 // handleServiceError writes the appropriate error response for an error

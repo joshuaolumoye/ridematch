@@ -184,6 +184,32 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 	utils.Success(c, http.StatusOK, "profile updated", resp)
 }
 
+// RegisterPushToken godoc
+//
+//	@Summary		Register (or clear) this device's Expo push token
+//	@Description	Called once after login/permission grant so admin and system notifications can reach this device's notification tray, in addition to the in-app notifications list. Pass an empty string to clear it (e.g. on sign-out).
+//	@Tags			Users
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			request	body		dto.RegisterPushTokenRequest	true	"Expo push token"
+//	@Success		200		{object}	utils.APIResponse
+//	@Router			/users/me/push-token [patch]
+func (h *AuthHandler) RegisterPushToken(c *gin.Context) {
+	var req dto.RegisterPushTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Fail(c, http.StatusBadRequest, "expo_push_token must be a string")
+		return
+	}
+
+	if err := h.auth.RegisterPushToken(c.Request.Context(), middleware.UserIDFromContext(c), req.ExpoPushToken); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	utils.Success(c, http.StatusOK, "push token saved", nil)
+}
+
 // DeleteAccount godoc
 //
 //	@Summary		Delete the authenticated user's account

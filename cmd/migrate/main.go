@@ -58,12 +58,41 @@ func main() {
 		&models.TripOffer{},
 		&models.TripRating{},
 		&models.PaymentTransaction{},
+		&models.SubscriptionPrice{},
+		&models.Notification{},
 	)
 	if err != nil {
 		log.Fatalf("migrate: auto-migration failed: %v", err)
 	}
 
+	if err := seedDefaultSubscriptionPrices(db, cfg.DriverSubDailyFee); err != nil {
+		log.Fatalf("migrate: failed to seed default subscription prices: %v", err)
+	}
+
 	log.Println("migrate: all tables are up to date")
+}
+
+// seedDefaultSubscriptionPrices inserts a starting daily price for any
+// vehicle type that doesn't have one yet, using the DRIVER_SUB_DAILY_FEE_KOBO
+// config value as the starting point for all four — an admin can then
+// give okada, keke, car, and bus their own price from the dashboard.
+// Never overwrites a price an admin has already set.
+func seedDefaultSubscriptionPrices(db *gorm.DB, defaultKobo int64) error {
+	vehicleTypes := []models.VehicleType{models.VehicleCar, models.VehicleOkada, models.VehicleKeke, models.VehicleBus}
+	for _, vt := range vehicleTypes {
+		var count int64
+		if err := db.Model(&models.SubscriptionPrice{}).Where("vehicle_type = ?", vt).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			continue
+		}
+		log.Printf("migrate: seeding default subscription price for %s...", vt)
+		if err := db.Create(&models.SubscriptionPrice{VehicleType: vt, PriceKoboPerDay: defaultKobo}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func dropIndexIfExists(db *gorm.DB, table, index string) error {

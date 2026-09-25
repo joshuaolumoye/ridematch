@@ -45,3 +45,9 @@ func (s *localStore) Save(_ context.Context, filename string, data io.Reader, _ 
 
 	return fmt.Sprintf("%s/%s/%s", s.publicBaseURL, uploadsDir, safeName), nil
 }
+
+// SignedURL is a no-op for the local driver — /uploads is already served
+// directly and publicly by the API itself, nothing to sign.
+func (s *localStore) SignedURL(_ context.Context, url string) (string, error) {
+	return url, nil
+}

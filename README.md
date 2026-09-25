@@ -157,6 +157,11 @@ is served at `/docs`. Summary:
 | GET    | `/api/v1/users/me`        | Bearer | Get the authenticated user's profile |
 | PATCH  | `/api/v1/users/me`        | Bearer | Update the caller's own name and/or photo — both optional, send only what changed |
 | DELETE | `/api/v1/users/me`        | Bearer | Permanently end every session and soft-delete the account (PII scrubbed immediately; trip/rating history kept for the other party's records) |
+| PATCH  | `/api/v1/users/me/push-token` | Bearer | Register (or clear, with an empty string) this device's Expo push token, so notifications reach the phone's notification tray |
+| GET    | `/api/v1/notifications`  | Bearer | Paginated (`?page=&page_size=`) list of the caller's own notifications, newest first, plus their total unread count |
+| GET    | `/api/v1/notifications/unread-count` | Bearer | Just the unread count, for a badge |
+| PATCH  | `/api/v1/notifications/:id/read` | Bearer | Mark one notification read |
+| POST   | `/api/v1/notifications/read-all` | Bearer | Mark every one of the caller's notifications read |
 | POST   | `/api/v1/uploads`         | Bearer | Upload a file (JPEG/PNG/WebP/PDF, max 8MB) — `multipart/form-data`, field name `file`; returns `{ "url": "..." }`. Used for a driver's vehicle photo and ID document before `POST /driver/register`. |
 | POST   | `/api/v1/driver/register` | Bearer | Register the current account as a driver (vehicle + ID doc URLs) |
 | GET    | `/api/v1/driver/profile`  | Bearer | Get the authenticated driver's profile |
@@ -166,6 +171,8 @@ is served at `/docs`. Summary:
 | GET    | `/api/v1/drivers/nearby`  | Bearer | Passenger-facing: nearby online drivers by vehicle type |
 | PATCH  | `/api/v1/admin/drivers/:id/verify` | Bearer (admin) | Approve/reject a driver's documents |
 | PATCH  | `/api/v1/admin/drivers/:id/subscription` | Bearer (admin) | Manually grant N days of platform access |
+| GET    | `/api/v1/admin/settings/subscription-prices` | Bearer (admin) | The daily platform-access fee currently set for each vehicle type (car/okada/keke/bus) |
+| PUT    | `/api/v1/admin/settings/subscription-prices/:vehicle_type` | Bearer (admin) | Set the daily platform-access fee for one vehicle type — takes effect on the very next driver checkout for that type |
 | POST   | `/api/v1/trips`           | Bearer | Passenger requests a trip; nearby drivers notified instantly over WebSocket |
 | GET    | `/api/v1/trips/active`    | Bearer | Get the caller's current in-progress trip, if any |
 | GET    | `/api/v1/trips/history`   | Bearer | Paginated (`?page=&page_size=`, max 50/page) list of the caller's own trips, newest first, every status |
@@ -384,10 +391,11 @@ go through `internal/storage`, an interface with two implementations:
 **To switch on IDrive e2:**
 
 1. In the [e2 dashboard](https://www.idrive.com/e2/), create a bucket.
-   Set it to allow public read (or put a CDN/custom domain in front of
-   it) — the URLs `POST /uploads` returns have to be reachable by end
-   users' phones, the same contract the `local` driver already has via
-   `APP_PUBLIC_URL`.
+   It can stay **private** (e2's default for a new bucket) — it does not
+   need to be switched to public read, and there's no reason to bother
+   with a CDN/custom domain just to serve these images. Every photo/
+   document URL is signed on its way out of the API (see "Signed URLs"
+   below), so a private bucket works out of the box.
 2. Create an access key pair — e2 dashboard → **Access Keys**.
 3. Copy the bucket's endpoint from its detail page. It's per-account,
    shaped like `https://<id>.<region>.idrivee2-<n>.com`, not a fixed
@@ -405,6 +413,28 @@ document ending up unencrypted on local disk because a credential was
 typo'd would be a much worse surprise than a startup error. `.env` here
 ships with `STORAGE_DRIVER=local` until real e2 credentials are filled
 in, so the server always starts cleanly out of the box.
+
+**Signed URLs.** `POST /uploads` still returns a plain (unsigned) URL, and
+that's what gets saved to the database — but nothing serves that exact
+URL back to a client. Every place the API returns a photo or document URL
+(a user's profile photo, a driver's vehicle photo, a trip's passenger/
+driver info) calls `Store.SignedURL` first, which:
+
+- on the `local` driver, hands the URL back unchanged (already public);
+- on the `s3` driver, recovers the object's key from the stored URL and
+  asks IDrive e2 for a presigned `GET` — a URL with a temporary,
+  cryptographically-signed query string proving this app is authorized
+  to fetch that one object, valid for **1 hour**.
+
+That signed URL is generated fresh on every API response and never
+persisted — a copy saved anywhere just expires after an hour, which is
+expected. If a photo that displayed fine yesterday now 403s in a client
+that cached the response for a long time, that's this expiry working as
+intended: refetching the profile/trip/driver endpoint returns a freshly
+signed one. This is also why a bucket doesn't need to be public: whether
+IDrive e2's bucket-level access is public or private, this app always
+signs, so a photo's visibility never silently depends on a dashboard
+toggle being set correctly.
 
 ## Commands
 

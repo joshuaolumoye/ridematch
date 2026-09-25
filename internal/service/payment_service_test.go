@@ -60,6 +60,18 @@ func (r *fakeDriverRepo) Update(_ context.Context, p *models.DriverProfile) erro
 	r.byUserID[p.UserID] = p
 	return nil
 }
+func (r *fakeDriverRepo) FindAll(_ context.Context, _ repository.DriverFilter, _, _ int) ([]models.DriverProfile, int64, error) {
+	return nil, 0, nil
+}
+func (r *fakeDriverRepo) CountByVehicleType(_ context.Context) (map[string]int64, error) {
+	return map[string]int64{}, nil
+}
+func (r *fakeDriverRepo) CountByVerificationStatus(_ context.Context) (map[string]int64, error) {
+	return map[string]int64{}, nil
+}
+func (r *fakeDriverRepo) CountOnline(_ context.Context) (int64, error) {
+	return 0, nil
+}
 
 type fakePaymentRepo struct {
 	byTxRef map[string]*models.PaymentTransaction
@@ -120,8 +132,8 @@ func TestInitiateSubscriptionCheckout_ComputesAmountAndPersistsTransaction(t *te
 	driverRepo := newFakeDriverRepo(driver)
 	paymentRepo := newFakePaymentRepo()
 	gw := &fakeGateway{initiateLink: "https://checkout.flutterwave.com/pay/abc123"}
-	admin := NewAdminService(driverRepo)
-	svc := NewPaymentService(paymentRepo, driverRepo, admin, gw, 100000 /* NGN 1000 */, "secret", "https://ridematch.app/callback")
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, gw, 100000 /* NGN 1000 */, "secret", "https://ridematch.app/callback")
 
 	resp, err := svc.InitiateSubscriptionCheckout(context.Background(), "user-1", dto.InitiateSubscriptionRequest{Days: 3})
 	if err != nil {
@@ -154,8 +166,8 @@ func TestInitiateSubscriptionCheckout_DefaultsToOneDay(t *testing.T) {
 	driverRepo := newFakeDriverRepo(driver)
 	paymentRepo := newFakePaymentRepo()
 	gw := &fakeGateway{initiateLink: "https://checkout.example/x"}
-	admin := NewAdminService(driverRepo)
-	svc := NewPaymentService(paymentRepo, driverRepo, admin, gw, 100000, "secret", "https://x")
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, gw, 100000, "secret", "https://x")
 
 	resp, err := svc.InitiateSubscriptionCheckout(context.Background(), "user-1", dto.InitiateSubscriptionRequest{})
 	if err != nil {
@@ -170,8 +182,8 @@ func TestInitiateSubscriptionCheckout_UnknownDriverReturnsNotFound(t *testing.T)
 	driverRepo := newFakeDriverRepo()
 	paymentRepo := newFakePaymentRepo()
 	gw := &fakeGateway{}
-	admin := NewAdminService(driverRepo)
-	svc := NewPaymentService(paymentRepo, driverRepo, admin, gw, 100000, "secret", "https://x")
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, gw, 100000, "secret", "https://x")
 
 	_, err := svc.InitiateSubscriptionCheckout(context.Background(), "someone-not-a-driver", dto.InitiateSubscriptionRequest{})
 	if !errors.Is(err, ErrDriverProfileNotFound) {
@@ -193,8 +205,8 @@ func webhookPayload(id int64, txRef, status string, amount float64) dto.Flutterw
 func TestHandleWebhook_RejectsBadSignature(t *testing.T) {
 	driverRepo := newFakeDriverRepo(newTestDriverProfile())
 	paymentRepo := newFakePaymentRepo()
-	admin := NewAdminService(driverRepo)
-	svc := NewPaymentService(paymentRepo, driverRepo, admin, &fakeGateway{}, 100000, "correct-secret", "https://x")
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, &fakeGateway{}, 100000, "correct-secret", "https://x")
 
 	err := svc.HandleWebhook(context.Background(), "wrong-secret", webhookPayload(1, "sub_x", "successful", 1000))
 	if !errors.Is(err, ErrInvalidWebhookSignature) {
@@ -206,7 +218,7 @@ func TestHandleWebhook_SuccessfulPaymentActivatesSubscription(t *testing.T) {
 	driver := newTestDriverProfile()
 	driverRepo := newFakeDriverRepo(driver)
 	paymentRepo := newFakePaymentRepo()
-	admin := NewAdminService(driverRepo)
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
 
 	// Seed a pending transaction exactly as InitiateSubscriptionCheckout would.
 	tx := &models.PaymentTransaction{
@@ -218,7 +230,7 @@ func TestHandleWebhook_SuccessfulPaymentActivatesSubscription(t *testing.T) {
 	gw := &fakeGateway{verifyResult: &flutterwave.VerifyResult{
 		FlwTransactionID: "999", TxRef: "sub_abc", Status: "successful", AmountKobo: 200000, Currency: "NGN",
 	}}
-	svc := NewPaymentService(paymentRepo, driverRepo, admin, gw, 100000, "secret", "https://x")
+	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, gw, 100000, "secret", "https://x")
 
 	if driver.HasActiveSubscription() {
 		t.Fatal("driver should not have an active subscription before the webhook fires")
@@ -250,7 +262,7 @@ func TestHandleWebhook_IsIdempotentOnRetry(t *testing.T) {
 	driver := newTestDriverProfile()
 	driverRepo := newFakeDriverRepo(driver)
 	paymentRepo := newFakePaymentRepo()
-	admin := NewAdminService(driverRepo)
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
 
 	tx := &models.PaymentTransaction{
 		Base: models.Base{ID: "tx-1"}, DriverID: "driver-1", TxRef: "sub_abc",
@@ -262,7 +274,7 @@ func TestHandleWebhook_IsIdempotentOnRetry(t *testing.T) {
 	gw := &countingGateway{fakeGateway: fakeGateway{verifyResult: &flutterwave.VerifyResult{
 		FlwTransactionID: "1", TxRef: "sub_abc", Status: "successful", AmountKobo: 100000, Currency: "NGN",
 	}}, calls: &callCount}
-	svc := NewPaymentService(paymentRepo, driverRepo, admin, gw, 100000, "secret", "https://x")
+	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, gw, 100000, "secret", "https://x")
 
 	payload := webhookPayload(1, "sub_abc", "successful", 1000)
 
@@ -289,7 +301,7 @@ func TestHandleWebhook_AmountMismatchIsRejectedAndMarkedFailed(t *testing.T) {
 	driver := newTestDriverProfile()
 	driverRepo := newFakeDriverRepo(driver)
 	paymentRepo := newFakePaymentRepo()
-	admin := NewAdminService(driverRepo)
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
 
 	tx := &models.PaymentTransaction{
 		Base: models.Base{ID: "tx-1"}, DriverID: "driver-1", TxRef: "sub_abc",
@@ -303,7 +315,7 @@ func TestHandleWebhook_AmountMismatchIsRejectedAndMarkedFailed(t *testing.T) {
 	gw := &fakeGateway{verifyResult: &flutterwave.VerifyResult{
 		FlwTransactionID: "1", TxRef: "sub_abc", Status: "successful", AmountKobo: 100, Currency: "NGN",
 	}}
-	svc := NewPaymentService(paymentRepo, driverRepo, admin, gw, 100000, "secret", "https://x")
+	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, gw, 100000, "secret", "https://x")
 
 	err := svc.HandleWebhook(context.Background(), "secret", webhookPayload(1, "sub_abc", "successful", 5000))
 	if !errors.Is(err, ErrPaymentVerificationFailed) {
@@ -321,8 +333,8 @@ func TestHandleWebhook_AmountMismatchIsRejectedAndMarkedFailed(t *testing.T) {
 func TestHandleWebhook_IgnoresNonChargeCompletedEvents(t *testing.T) {
 	driverRepo := newFakeDriverRepo(newTestDriverProfile())
 	paymentRepo := newFakePaymentRepo()
-	admin := NewAdminService(driverRepo)
-	svc := NewPaymentService(paymentRepo, driverRepo, admin, &fakeGateway{}, 100000, "secret", "https://x")
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, &fakeGateway{}, 100000, "secret", "https://x")
 
 	payload := dto.FlutterwaveWebhookPayload{}
 	payload.Event = "transfer.completed" // not the event this app acts on

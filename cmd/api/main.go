@@ -9,6 +9,7 @@ import (
 	"ridematch-backend/internal/email"
 	"ridematch-backend/internal/flutterwave"
 	"ridematch-backend/internal/handler"
+	"ridematch-backend/internal/push"
 	"ridematch-backend/internal/repository"
 	"ridematch-backend/internal/router"
 	"ridematch-backend/internal/service"
@@ -42,6 +43,8 @@ func main() {
 	tripLocationRepo := repository.NewTripLocationRepository(redisClient)
 	paymentRepo := repository.NewPaymentRepository(db)
 	tripRatingRepo := repository.NewTripRatingRepository(db)
+	subscriptionPriceRepo := repository.NewSubscriptionPriceRepository(db)
+	notificationRepo := repository.NewNotificationRepository(db)
 
 	// SMS provider — console logging by default, Termii in production
 	// once SMS_PROVIDER=termii and TERMII_API_KEY are set.
@@ -66,21 +69,38 @@ func main() {
 
 	jwtManager := utils.NewJWTManager(cfg.JWTAccessSecret, cfg.JWTAccessTTL, cfg.JWTRefreshTTL)
 
-	authService := service.NewAuthService(
-		userRepo, otpRepo, tokenRepo, smsSender, emailSender, jwtManager,
-		cfg.OTPTTL, cfg.OTPLength, cfg.OTPResendCooldown, cfg.OTPMaxAttempts,
-	)
-	driverService := service.NewDriverService(
-		driverRepo, userRepo, locationRepo,
-		cfg.LocationStaleAfter, cfg.NearbyDefaultRadiusKM, cfg.NearbyMaxRadiusKM,
-		cfg.NearbyDefaultLimit, cfg.NearbyCoordinatePrecision,
-	)
-	adminService := service.NewAdminService(driverRepo)
-
 	fileStore, err := storage.New(cfg)
 	if err != nil {
 		log.Fatalf("main: %v", err)
 	}
+
+	// Push provider — console logging by default, real Expo push delivery
+	// once PUSH_PROVIDER=expo (EXPO_PUSH_ACCESS_TOKEN is optional even
+	// then, only needed if Expo's enhanced security is enabled).
+	var pushSender push.Sender
+	switch cfg.PushProvider {
+	case "expo":
+		pushSender = push.NewExpoSender(cfg.ExpoPushAccessToken)
+	default:
+		pushSender = push.NewConsoleSender()
+	}
+
+	hub := ws.NewHub()
+
+	authService := service.NewAuthService(
+		userRepo, otpRepo, tokenRepo, smsSender, emailSender, jwtManager, fileStore,
+		cfg.OTPTTL, cfg.OTPLength, cfg.OTPResendCooldown, cfg.OTPMaxAttempts,
+	)
+	driverService := service.NewDriverService(
+		driverRepo, userRepo, locationRepo, fileStore,
+		cfg.LocationStaleAfter, cfg.NearbyDefaultRadiusKM, cfg.NearbyMaxRadiusKM,
+		cfg.NearbyDefaultLimit, cfg.NearbyCoordinatePrecision,
+	)
+	notificationService := service.NewNotificationService(notificationRepo, userRepo, hub, pushSender)
+	adminService := service.NewAdminService(
+		driverRepo, userRepo, tripRepo, locationRepo, subscriptionPriceRepo, fileStore, smsSender, emailSender,
+		notificationService, cfg.LocationStaleAfter,
+	)
 
 	flwClient := flutterwave.NewClient(cfg.FlutterwaveSecretKey)
 	if cfg.FlutterwaveBaseURL != "" {
@@ -88,13 +108,12 @@ func main() {
 	}
 	var flwGateway flutterwave.Gateway = flwClient
 	paymentService := service.NewPaymentService(
-		paymentRepo, driverRepo, adminService, flwGateway,
+		paymentRepo, driverRepo, subscriptionPriceRepo, adminService, flwGateway,
 		cfg.DriverSubDailyFee, cfg.FlutterwaveWebhookKey, cfg.FlutterwaveRedirectURL,
 	)
 
-	hub := ws.NewHub()
 	tripService := service.NewTripService(
-		tripRepo, tripOfferRepo, driverRepo, userRepo, tripRatingRepo, tripLocationRepo, locationRepo, hub,
+		tripRepo, tripOfferRepo, driverRepo, userRepo, tripRatingRepo, tripLocationRepo, locationRepo, hub, fileStore,
 		cfg.TripExpiryAfter, cfg.NearbyDefaultRadiusKM, cfg.NearbyDefaultLimit, cfg.NearbyCoordinatePrecision,
 		cfg.LocationStaleAfter,
 	)
@@ -107,17 +126,19 @@ func main() {
 	wsHandler := handler.NewWSHandler(hub, jwtManager)
 	paymentHandler := handler.NewPaymentHandler(paymentService)
 	uploadHandler := handler.NewUploadHandler(fileStore)
+	notificationHandler := handler.NewNotificationHandler(notificationService)
 
 	r := router.New(router.Dependencies{
-		AuthHandler:    authHandler,
-		DriverHandler:  driverHandler,
-		AdminHandler:   adminHandler,
-		DocsHandler:    docsHandler,
-		TripHandler:    tripHandler,
-		WSHandler:      wsHandler,
-		PaymentHandler: paymentHandler,
-		UploadHandler:  uploadHandler,
-		JWTManager:     jwtManager,
+		AuthHandler:         authHandler,
+		DriverHandler:       driverHandler,
+		AdminHandler:        adminHandler,
+		DocsHandler:         docsHandler,
+		TripHandler:         tripHandler,
+		WSHandler:           wsHandler,
+		PaymentHandler:      paymentHandler,
+		UploadHandler:       uploadHandler,
+		NotificationHandler: notificationHandler,
+		JWTManager:          jwtManager,
 
 		RedisClient:                   redisClient,
 		RateLimitTripCreatePerMinute:  cfg.RateLimitTripCreatePerMinute,

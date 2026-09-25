@@ -10,6 +10,7 @@ import (
 	"ridematch-backend/internal/dto"
 	"ridematch-backend/internal/models"
 	"ridematch-backend/internal/repository"
+	"ridematch-backend/internal/storage"
 	"ridematch-backend/internal/utils"
 	"ridematch-backend/internal/ws"
 )
@@ -36,6 +37,7 @@ type TripService struct {
 	tripLocations   repository.TripLocationRepository
 	driverLocations repository.LocationRepository
 	hub             *ws.Hub
+	fileStore       storage.Store
 
 	expiryAfter         time.Duration
 	nearbyRadiusKM      float64
@@ -62,6 +64,7 @@ func NewTripService(
 	tripLocations repository.TripLocationRepository,
 	driverLocations repository.LocationRepository,
 	hub *ws.Hub,
+	fileStore storage.Store,
 	expiryAfter time.Duration,
 	nearbyRadiusKM float64,
 	nearbyLimit int,
@@ -77,6 +80,7 @@ func NewTripService(
 		tripLocations:       tripLocations,
 		driverLocations:     driverLocations,
 		hub:                 hub,
+		fileStore:           fileStore,
 		expiryAfter:         expiryAfter,
 		nearbyRadiusKM:      nearbyRadiusKM,
 		nearbyLimit:         nearbyLimit,
@@ -383,7 +387,7 @@ func (s *TripService) MakeOffer(ctx context.Context, driverUserID, tripID string
 		return nil, fmt.Errorf("service: failed to check existing offer: %w", err)
 	}
 
-	resp := s.toOfferResponse(offer, profile)
+	resp := s.toOfferResponse(ctx, offer, profile)
 	s.hub.SendToUser(trip.PassengerID, ws.Event{Type: ws.EventOfferReceived, Data: resp})
 
 	return &resp, nil
@@ -410,7 +414,7 @@ func (s *TripService) ListOffers(ctx context.Context, passengerUserID, tripID st
 
 	results := make([]dto.OfferResponse, len(offers))
 	for i, o := range offers {
-		results[i] = s.toOfferResponse(&o, o.Driver)
+		results[i] = s.toOfferResponse(ctx, &o, o.Driver)
 	}
 	return results, nil
 }
@@ -866,7 +870,7 @@ func (s *TripService) toTripResponse(ctx context.Context, trip *models.Trip) dto
 	if trip.Passenger != nil {
 		resp.PassengerInfo = &dto.TripPartyInfo{
 			Name:     trip.Passenger.Name,
-			PhotoURL: trip.Passenger.PhotoURL,
+			PhotoURL: s.signPhotoURL(ctx, trip.Passenger.PhotoURL),
 			Phone:    trip.Passenger.Phone,
 			Email:    trip.Passenger.Email,
 			Rating:   trip.Passenger.RatingAverage,
@@ -880,7 +884,7 @@ func (s *TripService) toTripResponse(ctx context.Context, trip *models.Trip) dto
 		}
 		if trip.Driver.User != nil {
 			info.Name = trip.Driver.User.Name
-			info.PhotoURL = trip.Driver.User.PhotoURL
+			info.PhotoURL = s.signPhotoURL(ctx, trip.Driver.User.PhotoURL)
 			info.Phone = trip.Driver.User.Phone
 			info.Email = trip.Driver.User.Email
 		}
@@ -987,7 +991,7 @@ func incrementalAverage(currentAverage float64, currentCount int64, newValue int
 	return math.Round(avg*100) / 100
 }
 
-func (s *TripService) toOfferResponse(offer *models.TripOffer, profile *models.DriverProfile) dto.OfferResponse {
+func (s *TripService) toOfferResponse(ctx context.Context, offer *models.TripOffer, profile *models.DriverProfile) dto.OfferResponse {
 	resp := dto.OfferResponse{
 		ID:        offer.ID,
 		TripID:    offer.TripID,
@@ -1002,9 +1006,17 @@ func (s *TripService) toOfferResponse(offer *models.TripOffer, profile *models.D
 		}
 		if profile.User != nil {
 			info.Name = profile.User.Name
-			info.PhotoURL = profile.User.PhotoURL
+			info.PhotoURL = s.signPhotoURL(ctx, profile.User.PhotoURL)
 		}
 		resp.Driver = info
 	}
 	return resp
+}
+
+// signPhotoURL signs a stored photo URL for the current response — thin
+// wrapper around the shared signURL helper (see driver_service.go) so
+// call sites in this file read as "sign this trip party's photo" rather
+// than repeating the fileStore plumbing.
+func (s *TripService) signPhotoURL(ctx context.Context, url string) string {
+	return signURL(ctx, s.fileStore, url)
 }

@@ -29,6 +29,13 @@ type Config struct {
 	DBUser     string
 	DBPassword string
 	DBName     string
+	// DBTLS is passed straight through as the mysql driver's `tls` DSN
+	// param — leave empty for a plain connection (the default; correct
+	// for most local/Railway-internal setups), or set to "skip-verify"
+	// when connecting to a host that requires TLS but you don't need to
+	// validate its certificate (e.g. Railway's public MySQL proxy, from
+	// a machine outside Railway's network).
+	DBTLS string
 
 	RedisAddr     string
 	RedisPassword string
@@ -70,6 +77,12 @@ type Config struct {
 	SMTPPassword    string
 	SMTPFromAddress string
 	SMTPFromName    string
+
+	// PushProvider picks how push notifications get sent: "console"
+	// (default, logs to stdout) or "expo", which delivers via Expo's push
+	// service — the standard path for this Expo-managed app.
+	PushProvider        string
+	ExpoPushAccessToken string // optional; only needed if "Enhanced Push Security" is enabled on the Expo project
 
 	FlutterwaveSecretKey   string
 	FlutterwavePublicKey   string
@@ -134,6 +147,7 @@ func Load() *Config {
 		DBUser:     getEnv("DB_USER", "root"),
 		DBPassword: getEnv("DB_PASSWORD", ""),
 		DBName:     getEnv("DB_NAME", "ridematch"),
+		DBTLS:      getEnv("DB_TLS", ""),
 
 		RedisAddr:     getEnv("REDIS_ADDR", "127.0.0.1:6379"),
 		RedisPassword: getEnv("REDIS_PASSWORD", ""),
@@ -172,6 +186,9 @@ func Load() *Config {
 		SMTPFromAddress: getEnv("SMTP_FROM_ADDRESS", ""),
 		SMTPFromName:    getEnv("SMTP_FROM_NAME", "RideMatch"),
 
+		PushProvider:        getEnv("PUSH_PROVIDER", "console"),
+		ExpoPushAccessToken: getEnv("EXPO_PUSH_ACCESS_TOKEN", ""),
+
 		FlutterwaveSecretKey:   getEnv("FLW_SECRET_KEY", ""),
 		FlutterwavePublicKey:   getEnv("FLW_PUBLIC_KEY", ""),
 		FlutterwaveWebhookKey:  getEnv("FLW_WEBHOOK_SECRET_HASH", ""),
@@ -193,9 +210,13 @@ func Load() *Config {
 
 // DSN builds the MySQL data source name used by the GORM MySQL driver.
 func (c *Config) DSN() string {
+	tls := ""
+	if c.DBTLS != "" {
+		tls = "&tls=" + c.DBTLS
+	}
 	return fmt.Sprintf(
-		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=UTC&multiStatements=true",
-		c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBName,
+		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=UTC&multiStatements=true%s",
+		c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBName, tls,
 	)
 }
 

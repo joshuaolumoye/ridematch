@@ -116,4 +116,16 @@ var (
 	// the webhook claimed (status, amount, or currency mismatch) — the
 	// payment is never credited in this case.
 	ErrPaymentVerificationFailed = errors.New("payment could not be verified")
+
+	// ErrUserNotFound is returned by admin operations that look up a
+	// user account (any role) that doesn't exist.
+	ErrUserNotFound = errors.New("user not found")
+
+	// ErrNotificationNotFound is returned when a notification ID doesn't
+	// exist, or doesn't belong to the caller.
+	ErrNotificationNotFound = errors.New("notification not found")
+
+	// ErrInvalidVehicleType is returned when a vehicle type string isn't
+	// one of car/okada/keke/bus.
+	ErrInvalidVehicleType = errors.New("invalid vehicle type")
 )

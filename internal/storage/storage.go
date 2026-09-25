@@ -14,9 +14,21 @@ import (
 	"ridematch-backend/internal/config"
 )
 
-// Store saves file content and returns a publicly reachable URL for it.
+// Store saves file content and returns a URL for it.
 type Store interface {
 	Save(ctx context.Context, filename string, data io.Reader, size int64, contentType string) (url string, err error)
+
+	// SignedURL takes a URL previously returned by Save and returns one
+	// that's actually viewable right now. For the local driver this is
+	// always the same URL back unchanged (served directly by the API's
+	// own /uploads route). For the S3 driver, IDrive e2 buckets default
+	// to private — the URL Save() returns points at the object but isn't
+	// itself authorized to fetch it — so this generates a short-lived
+	// presigned GET URL (time-limited query-string signature) instead.
+	// Called fresh every time a photo URL is about to go out in an API
+	// response, never stored — a presigned URL saved to the database
+	// would just expire.
+	SignedURL(ctx context.Context, url string) (string, error)
 }
 
 // New builds the configured Store. "local" (the default, and everything

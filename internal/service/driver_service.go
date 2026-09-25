@@ -10,6 +10,7 @@ import (
 	"ridematch-backend/internal/dto"
 	"ridematch-backend/internal/models"
 	"ridematch-backend/internal/repository"
+	"ridematch-backend/internal/storage"
 )
 
 // DriverService implements driver registration, going online/offline,
@@ -19,6 +20,7 @@ type DriverService struct {
 	drivers               repository.DriverRepository
 	users                 repository.UserRepository
 	locations             repository.LocationRepository
+	fileStore             storage.Store
 	locationStaleAfter    time.Duration
 	nearbyDefaultRadiusKM float64
 	nearbyMaxRadiusKM     float64
@@ -31,6 +33,7 @@ func NewDriverService(
 	drivers repository.DriverRepository,
 	users repository.UserRepository,
 	locations repository.LocationRepository,
+	fileStore storage.Store,
 	locationStaleAfter time.Duration,
 	nearbyDefaultRadiusKM, nearbyMaxRadiusKM float64,
 	nearbyDefaultLimit, coordinatePrecision int,
@@ -39,6 +42,7 @@ func NewDriverService(
 		drivers:               drivers,
 		users:                 users,
 		locations:             locations,
+		fileStore:             fileStore,
 		locationStaleAfter:    locationStaleAfter,
 		nearbyDefaultRadiusKM: nearbyDefaultRadiusKM,
 		nearbyMaxRadiusKM:     nearbyMaxRadiusKM,
@@ -83,7 +87,7 @@ func (s *DriverService) Register(ctx context.Context, userID string, req dto.Reg
 		return nil, fmt.Errorf("service: failed to promote user to driver role: %w", err)
 	}
 
-	resp := toDriverProfileResponse(profile)
+	resp := s.toDriverProfileResponse(ctx, profile)
 	return &resp, nil
 }
 
@@ -96,7 +100,7 @@ func (s *DriverService) GetMyProfile(ctx context.Context, userID string) (*dto.D
 		}
 		return nil, fmt.Errorf("service: failed to load driver profile: %w", err)
 	}
-	resp := toDriverProfileResponse(profile)
+	resp := s.toDriverProfileResponse(ctx, profile)
 	return &resp, nil
 }
 
@@ -127,7 +131,7 @@ func (s *DriverService) GoOnline(ctx context.Context, userID string, lat, lng fl
 		return nil, fmt.Errorf("service: failed to mark driver online: %w", err)
 	}
 
-	resp := toDriverProfileResponse(profile)
+	resp := s.toDriverProfileResponse(ctx, profile)
 	return &resp, nil
 }
 
@@ -207,7 +211,7 @@ func (s *DriverService) FindNearbyDrivers(ctx context.Context, vehicleType strin
 		photoURL := ""
 		if profile.User != nil {
 			name = profile.User.Name
-			photoURL = profile.User.PhotoURL
+			photoURL = signURL(ctx, s.fileStore, profile.User.PhotoURL)
 		}
 
 		results = append(results, dto.NearbyDriverResponse{
@@ -230,13 +234,37 @@ func roundTo(v float64, places int) float64 {
 	return math.Round(v*mult) / mult
 }
 
-func toDriverProfileResponse(p *models.DriverProfile) dto.DriverProfileResponse {
+func (s *DriverService) toDriverProfileResponse(ctx context.Context, p *models.DriverProfile) dto.DriverProfileResponse {
+	return buildDriverProfileResponse(p, signURL(ctx, s.fileStore, p.VehiclePhotoURL))
+}
+
+// signURL signs a stored URL for the current response if it's non-empty,
+// falling back to the unsigned URL on a signing error (a photo/document
+// that 403s is a smaller problem than an API call failing outright over
+// it). Shared by every service that puts a photo or document URL into a
+// response.
+func signURL(ctx context.Context, fileStore storage.Store, url string) string {
+	if url == "" {
+		return url
+	}
+	if signed, err := fileStore.SignedURL(ctx, url); err == nil {
+		return signed
+	}
+	return url
+}
+
+// buildDriverProfileResponse assembles the response from an already-
+// resolved (signed) vehicle photo URL — split out from
+// DriverService.toDriverProfileResponse so AdminService, which edits the
+// same profiles but isn't otherwise a DriverService, can build the exact
+// same shape rather than hand-rolling its own copy.
+func buildDriverProfileResponse(p *models.DriverProfile, vehiclePhotoURL string) dto.DriverProfileResponse {
 	resp := dto.DriverProfileResponse{
 		ID:                    p.ID,
 		UserID:                p.UserID,
 		VehicleType:           string(p.VehicleType),
 		PlateNumber:           p.PlateNumber,
-		VehiclePhotoURL:       p.VehiclePhotoURL,
+		VehiclePhotoURL:       vehiclePhotoURL,
 		VerificationStatus:    string(p.VerificationStatus),
 		VerificationNote:      p.VerificationNote,
 		IsOnline:              p.IsOnline,

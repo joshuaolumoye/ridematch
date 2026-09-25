@@ -12,6 +12,7 @@ import (
 	"ridematch-backend/internal/models"
 	"ridematch-backend/internal/repository"
 	"ridematch-backend/internal/sms"
+	"ridematch-backend/internal/storage"
 	"ridematch-backend/internal/utils"
 )
 
@@ -24,6 +25,7 @@ type AuthService struct {
 	smsSender   sms.Sender
 	emailSender email.Sender
 	jwt         *utils.JWTManager
+	fileStore   storage.Store
 	otpTTL      time.Duration
 	otpLen      int
 	cooldown    time.Duration
@@ -38,6 +40,7 @@ func NewAuthService(
 	smsSender sms.Sender,
 	emailSender email.Sender,
 	jwtManager *utils.JWTManager,
+	fileStore storage.Store,
 	otpTTL time.Duration,
 	otpLength int,
 	resendCooldown time.Duration,
@@ -48,6 +51,7 @@ func NewAuthService(
 		otps:        otps,
 		tokens:      tokens,
 		smsSender:   smsSender,
+		fileStore:   fileStore,
 		emailSender: emailSender,
 		jwt:         jwtManager,
 		otpTTL:      otpTTL,
@@ -182,7 +186,7 @@ func (s *AuthService) VerifyOTP(ctx context.Context, rawIdentifier, code, name s
 	}
 
 	return &dto.VerifyOTPResponse{
-		User:      toUserResponse(user),
+		User:      s.toUserResponse(ctx, user),
 		Tokens:    *tokens,
 		IsNewUser: isNew,
 	}, nil
@@ -347,7 +351,7 @@ func (s *AuthService) Me(ctx context.Context, userID string) (*dto.UserResponse,
 		}
 		return nil, err
 	}
-	resp := toUserResponse(user)
+	resp := s.toUserResponse(ctx, user)
 	return &resp, nil
 }
 
@@ -375,8 +379,29 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, req dto.
 		return nil, fmt.Errorf("service: failed to update profile: %w", err)
 	}
 
-	resp := toUserResponse(user)
+	resp := s.toUserResponse(ctx, user)
 	return &resp, nil
+}
+
+// RegisterPushToken stores (or clears, if empty) the caller's Expo push
+// token, so admin/system notifications can reach their phone's
+// notification tray in addition to the in-app notifications list. Called
+// by the app once after login/permission grant, and again whenever the
+// token rotates (Expo can reissue tokens).
+func (s *AuthService) RegisterPushToken(ctx context.Context, userID, expoPushToken string) error {
+	user, err := s.users.FindByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrInvalidRefreshToken
+		}
+		return fmt.Errorf("service: failed to load user: %w", err)
+	}
+
+	user.PushToken = expoPushToken
+	if err := s.users.Update(ctx, user); err != nil {
+		return fmt.Errorf("service: failed to save push token: %w", err)
+	}
+	return nil
 }
 
 // DeleteAccount permanently ends the caller's session everywhere (all
@@ -427,13 +452,13 @@ func (s *AuthService) DeleteAccount(ctx context.Context, userID string) error {
 	return nil
 }
 
-func toUserResponse(user *models.User) dto.UserResponse {
+func (s *AuthService) toUserResponse(ctx context.Context, user *models.User) dto.UserResponse {
 	return dto.UserResponse{
 		ID:            user.ID,
 		Phone:         user.Phone,
 		Email:         user.Email,
 		Name:          user.Name,
-		PhotoURL:      user.PhotoURL,
+		PhotoURL:      signURL(ctx, s.fileStore, user.PhotoURL),
 		Role:          string(user.Role),
 		Status:        string(user.Status),
 		RatingAverage: user.RatingAverage,
