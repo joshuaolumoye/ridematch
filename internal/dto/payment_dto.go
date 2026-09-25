@@ -13,6 +13,16 @@ type InitiateSubscriptionRequest struct {
 	RedirectURL string `json:"redirect_url" binding:"omitempty,url"`
 }
 
+// DriverSubscriptionPriceResponse is the daily platform-access price for
+// the calling driver's own vehicle type — read-only, admin-configured
+// (see AdminUpdateSubscriptionPriceRequest). The app multiplies
+// PriceKoboPerDay by however many days the driver picks to show the total
+// before they ever hit checkout.
+type DriverSubscriptionPriceResponse struct {
+	VehicleType     string `json:"vehicle_type"`
+	PriceKoboPerDay int64  `json:"price_kobo_per_day"`
+}
+
 // InitiateSubscriptionResponse is returned after a checkout link is
 // created — hand `payment_link` to the driver (open it in a browser/
 // WebView) to complete payment.

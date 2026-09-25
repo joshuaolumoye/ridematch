@@ -85,6 +85,25 @@ func (s *PaymentService) dailyFeeFor(ctx context.Context, vehicleType models.Veh
 	return price.PriceKoboPerDay
 }
 
+// GetSubscriptionPrice returns the current daily platform-access price
+// for the calling driver's own vehicle type, so the app can show it (and
+// the multiplied total for 1/3/7/30 days) before the driver ever starts
+// checkout.
+func (s *PaymentService) GetSubscriptionPrice(ctx context.Context, driverUserID string) (*dto.DriverSubscriptionPriceResponse, error) {
+	profile, err := s.drivers.FindByUserID(ctx, driverUserID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrDriverProfileNotFound
+		}
+		return nil, fmt.Errorf("service: failed to load driver profile: %w", err)
+	}
+
+	return &dto.DriverSubscriptionPriceResponse{
+		VehicleType:     string(profile.VehicleType),
+		PriceKoboPerDay: s.dailyFeeFor(ctx, profile.VehicleType),
+	}, nil
+}
+
 // InitiateSubscriptionCheckout creates a Flutterwave hosted-checkout link
 // for a driver to pay for N days of platform access. Nothing is granted
 // yet — access is only activated once the webhook confirms payment.

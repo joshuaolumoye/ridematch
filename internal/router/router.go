@@ -107,6 +107,7 @@ func New(deps Dependencies) *gin.Engine {
 			driver.POST("/online", deps.DriverHandler.GoOnline)
 			driver.POST("/offline", deps.DriverHandler.GoOffline)
 			driver.POST("/location", deps.DriverHandler.PingLocation)
+			driver.GET("/subscription/price", deps.PaymentHandler.GetSubscriptionPrice)
 			driver.POST("/subscription/checkout", deps.PaymentHandler.InitiateCheckout)
 			driver.GET("/trips/active", deps.TripHandler.DriverActive)
 			driver.GET("/trips/history", deps.TripHandler.DriverHistory)

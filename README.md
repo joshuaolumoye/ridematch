@@ -187,6 +187,7 @@ is served at `/docs`. Summary:
 | POST   | `/api/v1/trips/:id/cancel` | Bearer | Passenger or matched driver cancels (only before pickup is confirmed) |
 | POST   | `/api/v1/trips/:id/rate`  | Bearer | Either side of a completed trip rates the other (1-5, once each) — folds straight into that party's running average |
 | GET    | `/ws?token=<access_token>` | Query token | WebSocket upgrade — real-time push for every trip event above |
+| GET    | `/api/v1/driver/subscription/price` | Bearer | The daily platform-access price for the calling driver's own vehicle type — read-only, for showing a price (and the multiplied total for N days) before checkout |
 | POST   | `/api/v1/driver/subscription/checkout` | Bearer | Create a Flutterwave checkout link to pay for N days of platform access |
 | GET    | `/api/v1/driver/trips/active` | Bearer | The caller's current matched/picked-up trip as a driver, if any (404 if none) |
 | GET    | `/api/v1/driver/trips/history` | Bearer | Paginated (`?page=&page_size=`, max 50/page) list of the caller's own trips as a driver, newest first, every status |

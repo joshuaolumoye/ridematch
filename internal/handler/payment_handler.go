@@ -22,6 +22,25 @@ func NewPaymentHandler(payments *service.PaymentService) *PaymentHandler {
 	return &PaymentHandler{payments: payments}
 }
 
+// GetSubscriptionPrice godoc
+//
+//	@Summary		Get the daily platform-access price for my vehicle type
+//	@Description	Returns the admin-configured daily fee for the calling driver's own vehicle type (car/okada/keke/bus each have their own) — read-only, so the app can show the price, and the multiplied total for however many days the driver picks, before starting checkout.
+//	@Tags			Payments
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	utils.APIResponse{data=dto.DriverSubscriptionPriceResponse}
+//	@Failure		404	{object}	utils.APIResponse	"Not registered as a driver yet"
+//	@Router			/driver/subscription/price [get]
+func (h *PaymentHandler) GetSubscriptionPrice(c *gin.Context) {
+	resp, err := h.payments.GetSubscriptionPrice(c.Request.Context(), middleware.UserIDFromContext(c))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "subscription price loaded", resp)
+}
+
 // InitiateCheckout godoc
 //
 //	@Summary		Start a driver subscription payment
