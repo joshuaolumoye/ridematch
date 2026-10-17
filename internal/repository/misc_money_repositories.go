@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"ridematch-backend/internal/models"
 )
@@ -277,7 +278,7 @@ func NewPlatformSettingRepository(db *gorm.DB) PlatformSettingRepository {
 
 func (r *platformSettingRepository) Get(ctx context.Context, key string) (string, bool, error) {
 	var s models.PlatformSetting
-	err := r.db.WithContext(ctx).First(&s, "`key` = ?", key).Error
+	err := r.db.WithContext(ctx).Where(clause.Eq{Column: clause.Column{Name: "key"}, Value: key}).First(&s).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", false, nil
 	}

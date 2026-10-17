@@ -152,6 +152,17 @@ uses that URL for its connection. If using individual settings instead, set
 `DB_DRIVER=mysql` or unset it to retain the MySQL default. Run
 `go run ./cmd/migrate` against the selected database before starting the API.
 
+For a Render Web Service, build both executables and migrate before starting
+the API:
+
+- Build Command: `go build -tags netgo -ldflags '-s -w' -o app ./cmd/api && go build -tags netgo -ldflags '-s -w' -o migrate ./cmd/migrate`
+- Pre-Deploy Command: `./migrate`
+- Start Command: `./app`
+
+The migration command uses the same `DB_DRIVER` and `DATABASE_URL` environment
+as the API. If your Render plan does not offer a Pre-Deploy Command, run the
+migration binary once as a one-off command before routing traffic to the API.
+
 ## API overview
 
 Full interactive documentation — request/response schemas, try-it-out —
