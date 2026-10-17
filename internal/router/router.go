@@ -3,6 +3,7 @@
 package router
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -41,6 +42,15 @@ type Dependencies struct {
 
 	RateLimitTripCreatePerMinute  int
 	RateLimitOfferCreatePerMinute int
+
+	// TrustedProxies are the IPs/CIDRs of reverse proxies in front of
+	// this API that are trusted to set X-Forwarded-For/X-Real-IP
+	// honestly — see config.Config.TrustedProxies. Nil/empty means
+	// trust none (Gin falls back to the direct connection's IP, which
+	// is correct when nothing proxies traffic to this process, and
+	// safe-but-wrong — it'll see the proxy's IP for every request — when
+	// something does and this wasn't set).
+	TrustedProxies []string
 }
 
 // New builds and returns a fully configured gin.Engine.
@@ -48,9 +58,30 @@ func New(deps Dependencies) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery(), middleware.CORS())
 
+	// Must be set explicitly: an unset/empty list makes Gin trust NO
+	// proxy (c.ClientIP() always uses the direct connection), rather
+	// than gin.New()'s own default of trusting every proxy — which lets
+	// any client spoof X-Forwarded-For and defeat RateLimitByIP.
+	if err := r.SetTrustedProxies(deps.TrustedProxies); err != nil {
+		log.Printf("router: invalid TRUSTED_PROXIES entry, trusting no proxies: %v", err)
+		_ = r.SetTrustedProxies(nil)
+	}
+
 	r.GET("/health", func(c *gin.Context) {
 		utils.Success(c, http.StatusOK, "ridematch-api is healthy", gin.H{"status": "ok"})
 	})
+
+	// Some platforms' health/uptime checks probe "/" (often with HEAD)
+	// rather than "/health" before routing traffic to this instance.
+	// Without a handler here that's a 404 on every check — harmless, but
+	// noisy in the logs and occasionally mistaken by the platform for an
+	// unhealthy instance. GET and HEAD both land here; gin.New() doesn't
+	// add Gin's default HEAD-mirrors-GET behavior on its own.
+	rootOK := func(c *gin.Context) {
+		utils.Success(c, http.StatusOK, "MakeWeRide API", gin.H{"status": "ok"})
+	}
+	r.GET("/", rootOK)
+	r.HEAD("/", rootOK)
 
 	r.GET("/docs", deps.DocsHandler.UI)
 	r.GET("/docs/openapi.json", deps.DocsHandler.Spec)

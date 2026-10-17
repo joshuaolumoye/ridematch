@@ -197,6 +197,7 @@ func main() {
 		RedisClient:                   redisClient,
 		RateLimitTripCreatePerMinute:  cfg.RateLimitTripCreatePerMinute,
 		RateLimitOfferCreatePerMinute: cfg.RateLimitOfferCreatePerMinute,
+		TrustedProxies:                cfg.TrustedProxies,
 	})
 
 	// Background jobs. Every one is idempotent (compare-and-swap /

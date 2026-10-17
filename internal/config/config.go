@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -23,6 +24,18 @@ type Config struct {
 	// vehicle photo / ID document). Not needed with STORAGE_DRIVER=s3,
 	// where S3PublicBaseURL is used instead.
 	AppPublicURL string
+	// TrustedProxies lists the IPs/CIDRs of reverse proxies (load
+	// balancer, Nginx, Cloudflare, your platform's edge) that sit in
+	// front of this API and are trusted to set X-Forwarded-For/
+	// X-Real-IP honestly. Gin uses this to decide which hop in that
+	// header chain is the real client IP — used by RateLimitByIP and
+	// anything else that reads c.ClientIP(). Comma-separated via
+	// TRUSTED_PROXIES (e.g. "10.0.0.0/8" on a private LB, or your
+	// platform's documented proxy IPs). Left empty by default: Gin then
+	// trusts no proxy and always uses the direct connection's IP — safe,
+	// but if there IS a proxy in front, every request will appear to
+	// come from that proxy's own IP until this is set correctly.
+	TrustedProxies []string
 
 	DBHost     string
 	DBPort     string
@@ -169,9 +182,10 @@ func Load() *Config {
 	}
 
 	cfg := &Config{
-		AppEnv:       getEnv("APP_ENV", "development"),
-		AppPort:      getEnv("APP_PORT", "8080"),
-		AppPublicURL: getEnv("APP_PUBLIC_URL", "http://localhost:8080"),
+		AppEnv:         getEnv("APP_ENV", "development"),
+		AppPort:        getEnv("APP_PORT", "8080"),
+		AppPublicURL:   getEnv("APP_PUBLIC_URL", "http://localhost:8080"),
+		TrustedProxies: getEnvSlice("TRUSTED_PROXIES", nil),
 
 		DBHost:     getEnv("DB_HOST", "127.0.0.1"),
 		DBPort:     getEnv("DB_PORT", "3306"),
@@ -278,6 +292,28 @@ func (c *Config) DSN() string {
 // IsProduction reports whether the app is running with APP_ENV=production.
 func (c *Config) IsProduction() bool {
 	return c.AppEnv == "production"
+}
+
+// getEnvSlice reads a comma-separated env var into a trimmed, non-empty
+// string slice (e.g. "10.0.0.0/8, 172.16.0.0/12" -> ["10.0.0.0/8",
+// "172.16.0.0/12"]). Unset or empty returns fallback.
+func getEnvSlice(key string, fallback []string) []string {
+	v, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		return fallback
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return fallback
+	}
+	return out
 }
 
 func getEnv(key, fallback string) string {
