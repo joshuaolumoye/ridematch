@@ -109,7 +109,7 @@ type AuditLog struct {
 	TargetID    string    `gorm:"type:varchar(40);index:idx_audit_target,priority:2" json:"target_id"`
 	Metadata    string    `gorm:"type:text" json:"metadata,omitempty"`
 	IP          string    `gorm:"type:varchar(64)" json:"ip,omitempty"`
-	CreatedAt   time.Time `gorm:"type:datetime(3);index" json:"created_at"`
+	CreatedAt   time.Time `gorm:"precision:3;index" json:"created_at"`
 }
 
 func (AuditLog) TableName() string { return "audit_logs" }

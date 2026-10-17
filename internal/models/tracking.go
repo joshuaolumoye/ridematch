@@ -31,7 +31,7 @@ type DriverShift struct {
 	VehicleType VehicleType `gorm:"type:varchar(20);not null" json:"vehicle_type"`
 	Status      ShiftStatus `gorm:"type:varchar(10);index;not null" json:"status"`
 
-	StartedAt time.Time  `gorm:"type:datetime(3);index:idx_shift_driver_started,priority:2;not null" json:"started_at"`
+	StartedAt time.Time  `gorm:"precision:3;index:idx_shift_driver_started,priority:2;not null" json:"started_at"`
 	EndedAt   *time.Time `json:"ended_at,omitempty"`
 	EndReason string     `gorm:"type:varchar(30)" json:"end_reason,omitempty"`
 
@@ -68,8 +68,8 @@ type LocationPoint struct {
 	SpeedMps   float32   `json:"speed_mps"`
 	Heading    float32   `json:"heading"`
 	IsMock     bool      `json:"is_mock"`
-	RecordedAt time.Time `gorm:"type:datetime(3);index:idx_point_driver_time,priority:2;not null" json:"recorded_at"`
-	ReceivedAt time.Time `gorm:"type:datetime(3);not null" json:"received_at"`
+	RecordedAt time.Time `gorm:"precision:3;index:idx_point_driver_time,priority:2;not null" json:"recorded_at"`
+	ReceivedAt time.Time `gorm:"precision:3;not null" json:"received_at"`
 	Hash       string    `gorm:"type:char(64);not null" json:"hash"`
 }
 

@@ -1,4 +1,4 @@
-// Package database wires up connections to MySQL (via GORM) and Redis.
+// Package database wires up connections to SQL databases (via GORM) and Redis.
 package database
 
 import (
@@ -7,26 +7,39 @@ import (
 	"time"
 
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
 	"ridematch-backend/internal/config"
 )
 
-// NewMySQL opens a GORM connection to MySQL and configures the underlying
-// connection pool. It does not run migrations — see cmd/migrate.
-func NewMySQL(cfg *config.Config) (*gorm.DB, error) {
+// NewDB opens the configured SQL database and configures the connection pool.
+// It does not run migrations — see cmd/migrate.
+func NewDB(cfg *config.Config) (*gorm.DB, error) {
 	logLevel := logger.Warn
 	if !cfg.IsProduction() {
 		logLevel = logger.Info
 	}
 
-	db, err := gorm.Open(mysql.Open(cfg.DSN()), &gorm.Config{
+	gormConfig := &gorm.Config{
 		Logger:                                   logger.Default.LogMode(logLevel),
 		DisableForeignKeyConstraintWhenMigrating: false,
-	})
+		TranslateError:                           true,
+	}
+
+	var db *gorm.DB
+	var err error
+	switch cfg.DBDriver {
+	case "mysql":
+		db, err = gorm.Open(mysql.Open(cfg.DSN()), gormConfig)
+	case "postgres", "postgresql":
+		db, err = gorm.Open(postgres.Open(cfg.PostgresDSN()), gormConfig)
+	default:
+		return nil, fmt.Errorf("database: unsupported DB_DRIVER %q (expected mysql or postgres)", cfg.DBDriver)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("database: failed to connect to mysql: %w", err)
+		return nil, fmt.Errorf("database: failed to connect to %s: %w", cfg.DBDriver, err)
 	}
 
 	sqlDB, err := db.DB()
@@ -38,6 +51,6 @@ func NewMySQL(cfg *config.Config) (*gorm.DB, error) {
 	sqlDB.SetMaxIdleConns(10)
 	sqlDB.SetConnMaxLifetime(30 * time.Minute)
 
-	log.Println("database: mysql connection established")
+	log.Printf("database: %s connection established", cfg.DBDriver)
 	return db, nil
 }

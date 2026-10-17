@@ -9,7 +9,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 
 	"gorm.io/gorm"
@@ -22,7 +21,7 @@ import (
 func main() {
 	cfg := config.Load()
 
-	db, err := database.NewMySQL(cfg)
+	db, err := database.NewDB(cfg)
 	if err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
@@ -179,31 +178,19 @@ func seedDefaultSubscriptionPrices(db *gorm.DB, defaultKobo int64) error {
 }
 
 func dropIndexIfExists(db *gorm.DB, table, index string) error {
-	var count int64
-	if err := db.Raw(
-		`SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`,
-		table, index,
-	).Scan(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
+	migrator := db.Migrator()
+	if !migrator.HasIndex(table, index) {
 		return nil
 	}
 	log.Printf("migrate: dropping legacy index %s on %s...", index, table)
-	return db.Exec(fmt.Sprintf("ALTER TABLE `%s` DROP INDEX `%s`", table, index)).Error
+	return migrator.DropIndex(table, index)
 }
 
 func dropColumnIfExists(db *gorm.DB, table, column string) error {
-	var count int64
-	if err := db.Raw(
-		`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
-		table, column,
-	).Scan(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
+	migrator := db.Migrator()
+	if !migrator.HasColumn(table, column) {
 		return nil
 	}
 	log.Printf("migrate: dropping legacy column %s.%s...", table, column)
-	return db.Exec(fmt.Sprintf("ALTER TABLE `%s` DROP COLUMN `%s`", table, column)).Error
+	return migrator.DropColumn(table, column)
 }

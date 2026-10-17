@@ -46,7 +46,7 @@ func main() {
 	}
 
 	cfg := config.Load()
-	db, err := database.NewMySQL(cfg)
+	db, err := database.NewDB(cfg)
 	if err != nil {
 		log.Fatalf("seed-admin: %v", err)
 	}

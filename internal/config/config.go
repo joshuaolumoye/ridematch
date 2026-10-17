@@ -5,6 +5,8 @@ package config
 import (
 	"fmt"
 	"log"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -42,6 +44,9 @@ type Config struct {
 	DBUser     string
 	DBPassword string
 	DBName     string
+	DBDriver   string
+	DBURL      string
+	DBSSLMode  string
 	// DBTLS is passed straight through as the mysql driver's `tls` DSN
 	// param — leave empty for a plain connection (the default; correct
 	// for most local/Railway-internal setups), or set to "skip-verify"
@@ -181,6 +186,13 @@ func Load() *Config {
 		log.Println("config: no .env file found, relying on process environment")
 	}
 
+	dbURL := getEnv("DATABASE_URL", getEnv("DB_URL", ""))
+	dbDriver := databaseDriver(getEnv("DB_DRIVER", ""), dbURL)
+	dbPortDefault := "3306"
+	if dbDriver == "postgres" || dbDriver == "postgresql" {
+		dbPortDefault = "5432"
+	}
+
 	cfg := &Config{
 		AppEnv:         getEnv("APP_ENV", "development"),
 		AppPort:        getEnv("APP_PORT", "8080"),
@@ -188,10 +200,13 @@ func Load() *Config {
 		TrustedProxies: getEnvSlice("TRUSTED_PROXIES", nil),
 
 		DBHost:     getEnv("DB_HOST", "127.0.0.1"),
-		DBPort:     getEnv("DB_PORT", "3306"),
+		DBPort:     getEnv("DB_PORT", dbPortDefault),
 		DBUser:     getEnv("DB_USER", "root"),
 		DBPassword: getEnv("DB_PASSWORD", ""),
 		DBName:     getEnv("DB_NAME", "ridematch"),
+		DBDriver:   dbDriver,
+		DBURL:      dbURL,
+		DBSSLMode:  getEnv("DB_SSLMODE", "disable"),
 		DBTLS:      getEnv("DB_TLS", ""),
 
 		RedisAddr:     getEnv("REDIS_ADDR", "127.0.0.1:6379"),
@@ -277,6 +292,17 @@ func Load() *Config {
 	return cfg
 }
 
+func databaseDriver(configuredDriver, databaseURL string) string {
+	if configuredDriver != "" {
+		return strings.ToLower(configuredDriver)
+	}
+	urlScheme := strings.ToLower(databaseURL)
+	if strings.HasPrefix(urlScheme, "postgres://") || strings.HasPrefix(urlScheme, "postgresql://") {
+		return "postgres"
+	}
+	return "mysql"
+}
+
 // DSN builds the MySQL data source name used by the GORM MySQL driver.
 func (c *Config) DSN() string {
 	tls := ""
@@ -287,6 +313,26 @@ func (c *Config) DSN() string {
 		"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=UTC&multiStatements=true%s",
 		c.DBUser, c.DBPassword, c.DBHost, c.DBPort, c.DBName, tls,
 	)
+}
+
+// PostgresDSN builds a PostgreSQL URL. An injected DATABASE_URL or DB_URL
+// takes precedence over the individual DB_* settings.
+func (c *Config) PostgresDSN() string {
+	if c.DBURL != "" {
+		return c.DBURL
+	}
+
+	databaseURL := &url.URL{
+		Scheme: "postgres",
+		Host:   net.JoinHostPort(c.DBHost, c.DBPort),
+		User:   url.UserPassword(c.DBUser, c.DBPassword),
+		Path:   "/" + c.DBName,
+	}
+	query := databaseURL.Query()
+	query.Set("sslmode", c.DBSSLMode)
+	query.Set("timezone", "UTC")
+	databaseURL.RawQuery = query.Encode()
+	return databaseURL.String()
 }
 
 // IsProduction reports whether the app is running with APP_ENV=production.

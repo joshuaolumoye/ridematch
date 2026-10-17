@@ -13,7 +13,7 @@ and payment webhooks are follow-on milestones.
 ## Stack
 
 - **Go 1.24** + **Gin** — HTTP framework
-- **GORM** + **MySQL** — persistence, repository pattern
+- **GORM** + **MySQL or PostgreSQL** — persistence, repository pattern
 - **Redis** — reserved for live driver geolocation (GEO commands) and rate
   limiting in the next milestone; connected at startup so misconfiguration
   is caught early
@@ -98,7 +98,7 @@ scripts/
 ## Prerequisites
 
 - Go 1.24+
-- MySQL 8+ (or MariaDB 10.6+)
+- MySQL 8+ (or MariaDB 10.6+), or PostgreSQL 12+
 - Redis 6+
 
 ## Setup
@@ -109,10 +109,10 @@ go mod download
 
 # 2. Configure environment
 cp .env.example .env
-# edit .env: set DB_USER/DB_PASSWORD/DB_NAME, and generate JWT secrets:
+# edit .env: set DB_DRIVER and database settings, and generate JWT secrets:
 openssl rand -base64 48   # run twice, once for each JWT_*_SECRET
 
-# 3. Create the database (adjust to your MySQL setup)
+# 3. Create the database (skip if your provider already created it)
 mysql -u root -p -e "CREATE DATABASE ridematch CHARACTER SET utf8mb4;"
 
 # 4. Run migrations — creates/updates every table, safe to re-run anytime
@@ -141,6 +141,16 @@ an SMS/email account. Switch to `SMS_PROVIDER=termii` (+ `TERMII_API_KEY`)
 and `EMAIL_PROVIDER=smtp` (+ the `SMTP_*` settings — see `.env.example`
 for the exact values a Hostinger mailbox needs) to send real messages in
 production.
+
+### PostgreSQL deployment
+
+Set `DB_DRIVER=postgres` in the service environment. On Render, set
+`DATABASE_URL` to the PostgreSQL service's internal connection URL; the app
+uses that URL for its connection. If using individual settings instead, set
+`DB_HOST`, `DB_PORT` (usually `5432`), `DB_USER`, `DB_PASSWORD`, `DB_NAME`, and
+`DB_SSLMODE` (use `require` when the provider requires TLS). Leave
+`DB_DRIVER=mysql` or unset it to retain the MySQL default. Run
+`go run ./cmd/migrate` against the selected database before starting the API.
 
 ## API overview
 

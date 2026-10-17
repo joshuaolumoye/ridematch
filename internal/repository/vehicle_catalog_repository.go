@@ -24,6 +24,9 @@ var ErrDuplicate = errors.New("repository: duplicate entry")
 // error (1062) — the unique-index violation CreateMake/CreateModel can
 // hit.
 func isDuplicateKeyErr(err error) bool {
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
 	var mysqlErr *mysql.MySQLError
 	return errors.As(err, &mysqlErr) && mysqlErr.Number == 1062
 }

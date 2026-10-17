@@ -66,7 +66,7 @@ type LedgerEntry struct {
 	WalletID      *string   `gorm:"type:char(36);index:idx_entry_wallet_time,priority:1" json:"wallet_id,omitempty"`
 	AmountKobo    int64     `gorm:"not null" json:"amount_kobo"`
 	BalanceAfter  *int64    `json:"balance_after_kobo,omitempty"`
-	CreatedAt     time.Time `gorm:"type:datetime(3);index:idx_entry_wallet_time,priority:2" json:"created_at"`
+	CreatedAt     time.Time `gorm:"precision:3;index:idx_entry_wallet_time,priority:2" json:"created_at"`
 }
 
 func (LedgerEntry) TableName() string { return "ledger_entries" }
