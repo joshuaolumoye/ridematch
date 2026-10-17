@@ -1,0 +1,2184 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "RideMatch API",
+    "description": "Backend API for RideMatch — a multi-modal (car, okada, keke, bus) ride/logistics matching platform for Nigeria. Authentication is phone number + OTP based; there is no password field. All responses use a single envelope shape: `{ success, message, data, error }`.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Joshua Olumoye"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080/api/v1",
+      "description": "Local development"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Service liveness"
+    },
+    {
+      "name": "Auth",
+      "description": "Phone + OTP authentication and token lifecycle"
+    },
+    {
+      "name": "Users",
+      "description": "Authenticated user profile"
+    },
+    {
+      "name": "Driver",
+      "description": "Driver registration, online/offline, live location, and nearby-driver search"
+    },
+    {
+      "name": "Admin",
+      "description": "Staff-only: driver document verification and subscription activation"
+    },
+    {
+      "name": "Trips",
+      "description": "Trip request, driver negotiation, matching, pickup PIN confirmation, and completion"
+    },
+    {
+      "name": "Realtime",
+      "description": "WebSocket event push for trip lifecycle updates"
+    },
+    {
+      "name": "Payments",
+      "description": "Driver daily-access subscription checkout via Flutterwave, and its payment webhook"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Access token returned from /auth/otp/verify or /auth/token/refresh. Send as `Authorization: Bearer <token>`."
+      }
+    },
+    "schemas": {
+      "APIResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {},
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "RequestOTPRequest": {
+        "type": "object",
+        "required": [
+          "phone"
+        ],
+        "properties": {
+          "phone": {
+            "type": "string",
+            "example": "08012345678",
+            "description": "Any common Nigerian phone format: 080..., 234..., or +234..."
+          }
+        }
+      },
+      "RequestOTPResponse": {
+        "type": "object",
+        "properties": {
+          "phone": {
+            "type": "string",
+            "example": "+2348012345678"
+          },
+          "expires_in_seconds": {
+            "type": "integer",
+            "example": 300
+          },
+          "resend_in_seconds": {
+            "type": "integer",
+            "example": 60
+          }
+        }
+      },
+      "VerifyOTPRequest": {
+        "type": "object",
+        "required": [
+          "phone",
+          "code"
+        ],
+        "properties": {
+          "phone": {
+            "type": "string",
+            "example": "08012345678"
+          },
+          "code": {
+            "type": "string",
+            "example": "048213",
+            "minLength": 6,
+            "maxLength": 6
+          },
+          "name": {
+            "type": "string",
+            "example": "Joshua Olumoye",
+            "description": "Used only on first-time registration; ignored on login."
+          }
+        }
+      },
+      "AuthTokens": {
+        "type": "object",
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "refresh_token": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "token_type": {
+            "type": "string",
+            "example": "Bearer"
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "photo_url": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "driver",
+              "admin"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "suspended",
+              "banned"
+            ]
+          },
+          "rating_average": {
+            "type": "number",
+            "format": "float"
+          },
+          "is_driver": {
+            "type": "boolean"
+          }
+        }
+      },
+      "VerifyOTPResponse": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/UserResponse"
+          },
+          "tokens": {
+            "$ref": "#/components/schemas/AuthTokens"
+          },
+          "is_new_user": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RefreshTokenRequest": {
+        "type": "object",
+        "required": [
+          "refresh_token"
+        ],
+        "properties": {
+          "refresh_token": {
+            "type": "string"
+          }
+        }
+      },
+      "LogoutRequest": {
+        "type": "object",
+        "required": [
+          "refresh_token"
+        ],
+        "properties": {
+          "refresh_token": {
+            "type": "string"
+          }
+        }
+      },
+      "RegisterDriverRequest": {
+        "type": "object",
+        "required": [
+          "vehicle_type",
+          "plate_number",
+          "id_document_url"
+        ],
+        "properties": {
+          "vehicle_type": {
+            "type": "string",
+            "enum": [
+              "car",
+              "okada",
+              "keke",
+              "bus"
+            ],
+            "example": "okada"
+          },
+          "plate_number": {
+            "type": "string",
+            "example": "KJA-123-XY"
+          },
+          "vehicle_photo_url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "id_document_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Government ID or driver's license photo, hosted at a URL reachable by the backend. Never returned by any read endpoint."
+          }
+        }
+      },
+      "DriverProfileResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vehicle_type": {
+            "type": "string",
+            "enum": [
+              "car",
+              "okada",
+              "keke",
+              "bus"
+            ]
+          },
+          "plate_number": {
+            "type": "string"
+          },
+          "vehicle_photo_url": {
+            "type": "string"
+          },
+          "verification_status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected"
+            ]
+          },
+          "verification_note": {
+            "type": "string"
+          },
+          "is_online": {
+            "type": "boolean"
+          },
+          "has_active_subscription": {
+            "type": "boolean"
+          },
+          "subscription_active_until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rating_average": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "GoOnlineRequest": {
+        "type": "object",
+        "required": [
+          "latitude",
+          "longitude"
+        ],
+        "properties": {
+          "latitude": {
+            "type": "number",
+            "format": "float",
+            "example": 6.5244
+          },
+          "longitude": {
+            "type": "number",
+            "format": "float",
+            "example": 3.3792
+          }
+        }
+      },
+      "LocationPingRequest": {
+        "type": "object",
+        "required": [
+          "latitude",
+          "longitude"
+        ],
+        "properties": {
+          "latitude": {
+            "type": "number",
+            "format": "float",
+            "example": 6.5244
+          },
+          "longitude": {
+            "type": "number",
+            "format": "float",
+            "example": 3.3792
+          }
+        }
+      },
+      "NearbyDriverResponse": {
+        "type": "object",
+        "properties": {
+          "driver_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "photo_url": {
+            "type": "string"
+          },
+          "vehicle_type": {
+            "type": "string",
+            "enum": [
+              "car",
+              "okada",
+              "keke",
+              "bus"
+            ]
+          },
+          "rating_average": {
+            "type": "number",
+            "format": "float"
+          },
+          "distance_km": {
+            "type": "number",
+            "format": "float"
+          },
+          "latitude": {
+            "type": "number",
+            "format": "float",
+            "description": "Rounded, not exact — see NEARBY_COORDINATE_PRECISION"
+          },
+          "longitude": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "AdminVerifyDriverRequest": {
+        "type": "object",
+        "required": [
+          "approve"
+        ],
+        "properties": {
+          "approve": {
+            "type": "boolean"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminActivateSubscriptionRequest": {
+        "type": "object",
+        "required": [
+          "days"
+        ],
+        "properties": {
+          "days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365,
+            "example": 1
+          }
+        }
+      },
+      "CreateTripRequest": {
+        "type": "object",
+        "required": [
+          "vehicle_type",
+          "pickup_lat",
+          "pickup_lng",
+          "destination_lat",
+          "destination_lng",
+          "offered_price_kobo"
+        ],
+        "properties": {
+          "vehicle_type": {
+            "type": "string",
+            "enum": [
+              "car",
+              "okada",
+              "keke",
+              "bus"
+            ],
+            "example": "okada"
+          },
+          "pickup_lat": {
+            "type": "number",
+            "format": "float"
+          },
+          "pickup_lng": {
+            "type": "number",
+            "format": "float"
+          },
+          "pickup_address": {
+            "type": "string"
+          },
+          "destination_lat": {
+            "type": "number",
+            "format": "float"
+          },
+          "destination_lng": {
+            "type": "number",
+            "format": "float"
+          },
+          "destination_address": {
+            "type": "string"
+          },
+          "offered_price_kobo": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Passenger's asking price, in kobo (NGN x 100)"
+          }
+        }
+      },
+      "TripPartyInfo": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "photo_url": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "vehicle_type": {
+            "type": "string",
+            "enum": [
+              "car",
+              "okada",
+              "keke",
+              "bus"
+            ]
+          },
+          "plate_number": {
+            "type": "string"
+          },
+          "rating": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "TripResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "passenger_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "driver_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vehicle_type": {
+            "type": "string",
+            "enum": [
+              "car",
+              "okada",
+              "keke",
+              "bus"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "requested",
+              "matched",
+              "picked_up",
+              "completed",
+              "cancelled",
+              "expired"
+            ]
+          },
+          "pickup_lat": {
+            "type": "number",
+            "format": "float"
+          },
+          "pickup_lng": {
+            "type": "number",
+            "format": "float"
+          },
+          "pickup_address": {
+            "type": "string"
+          },
+          "destination_lat": {
+            "type": "number",
+            "format": "float"
+          },
+          "destination_lng": {
+            "type": "number",
+            "format": "float"
+          },
+          "destination_address": {
+            "type": "string"
+          },
+          "offered_price_kobo": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "agreed_price_kobo": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pickup_confirmed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cancelled_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cancelled_by": {
+            "type": "string",
+            "enum": [
+              "passenger",
+              "driver",
+              "system"
+            ]
+          },
+          "cancel_reason": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "driver_info": {
+            "$ref": "#/components/schemas/TripPartyInfo"
+          },
+          "passenger_info": {
+            "$ref": "#/components/schemas/TripPartyInfo"
+          }
+        }
+      },
+      "MakeOfferRequest": {
+        "type": "object",
+        "required": [
+          "price_kobo"
+        ],
+        "properties": {
+          "price_kobo": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Driver's proposed price, in kobo (NGN x 100)"
+          }
+        }
+      },
+      "OfferResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "trip_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "price_kobo": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "accepted",
+              "rejected",
+              "superseded",
+              "withdrawn"
+            ]
+          },
+          "driver": {
+            "$ref": "#/components/schemas/TripPartyInfo"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AcceptOfferResponse": {
+        "type": "object",
+        "properties": {
+          "trip": {
+            "$ref": "#/components/schemas/TripResponse"
+          },
+          "pickup_pin": {
+            "type": "string",
+            "description": "One-time plaintext 4-digit pickup PIN. Returned only here — show it to the driver in person at pickup. Never returned by any other endpoint."
+          }
+        }
+      },
+      "NearbyOpenTripResponse": {
+        "type": "object",
+        "properties": {
+          "trip_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vehicle_type": {
+            "type": "string",
+            "enum": [
+              "car",
+              "okada",
+              "keke",
+              "bus"
+            ]
+          },
+          "pickup_lat": {
+            "type": "number",
+            "format": "float",
+            "description": "Rounded, not exact — see NEARBY_COORDINATE_PRECISION"
+          },
+          "pickup_lng": {
+            "type": "number",
+            "format": "float"
+          },
+          "distance_km": {
+            "type": "number",
+            "format": "float"
+          },
+          "offered_price_kobo": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ConfirmPickupRequest": {
+        "type": "object",
+        "required": [
+          "pin"
+        ],
+        "properties": {
+          "pin": {
+            "type": "string",
+            "example": "4821",
+            "description": "4-digit pickup PIN the passenger shows the driver in person"
+          }
+        }
+      },
+      "CancelTripRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "InitiateSubscriptionRequest": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30,
+            "default": 1,
+            "description": "Days of platform access to pay for"
+          },
+          "redirect_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Where Flutterwave sends the driver after payment (defaults to FLW_REDIRECT_URL)"
+          }
+        }
+      },
+      "InitiateSubscriptionResponse": {
+        "type": "object",
+        "properties": {
+          "payment_link": {
+            "type": "string",
+            "format": "uri",
+            "description": "Open this in a browser/WebView to complete payment"
+          },
+          "tx_ref": {
+            "type": "string"
+          },
+          "amount_kobo": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "days": {
+            "type": "integer"
+          }
+        }
+      },
+      "FlutterwaveWebhookPayload": {
+        "type": "object",
+        "description": "Sent by Flutterwave, not constructed by API clients. Shown here for documentation completeness.",
+        "properties": {
+          "event": {
+            "type": "string",
+            "example": "charge.completed"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "tx_ref": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "example": "successful"
+              },
+              "amount": {
+                "type": "number",
+                "format": "float"
+              },
+              "currency": {
+                "type": "string",
+                "example": "NGN"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Liveness check",
+        "responses": {
+          "200": {
+            "description": "Service is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/otp/request": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Request a login/registration OTP",
+        "description": "Sends a 6-digit one-time code by SMS to the given Nigerian phone number. Used for both first-time registration and subsequent logins — the same endpoint covers both. Subject to a resend cooldown (default 60s) per phone number.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestOTPRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Code sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/RequestOTPResponse"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid phone number format"
+          },
+          "429": {
+            "description": "Resend cooldown still active"
+          }
+        }
+      }
+    },
+    "/auth/otp/verify": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Verify an OTP and obtain access/refresh tokens",
+        "description": "Verifies the 6-digit code sent to a phone number. If no account exists for the phone number yet, one is created automatically (pass `name` on first verification). Returns a JWT access token and an opaque refresh token.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyOTPRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/VerifyOTPResponse"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing/invalid fields, incorrect or expired code"
+          },
+          "403": {
+            "description": "Account suspended or banned"
+          },
+          "429": {
+            "description": "Too many incorrect attempts"
+          }
+        }
+      }
+    },
+    "/auth/token/refresh": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Exchange a refresh token for a new token pair",
+        "description": "Rotates the refresh token: the submitted token is revoked and a new access + refresh token pair is issued. The old refresh token cannot be reused.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshTokenRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New token pair",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/AuthTokens"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid, expired, or already-used refresh token"
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Log out (revoke a refresh token)",
+        "description": "Revokes the given refresh token, ending that session. Other devices/sessions for the same user are unaffected.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogoutRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Logged out"
+          }
+        }
+      }
+    },
+    "/users/me": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get the authenticated user's profile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/UserResponse"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid access token"
+          }
+        }
+      }
+    },
+    "/driver/register": {
+      "post": {
+        "tags": [
+          "Driver"
+        ],
+        "summary": "Register as a driver",
+        "description": "Creates a driver profile for the authenticated account and promotes it to the \"driver\" role. Vehicle photo and ID document must already be hosted somewhere reachable by URL. Starts in \"pending\" verification status.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterDriverRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Driver profile created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/DriverProfileResponse"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing/invalid fields"
+          },
+          "409": {
+            "description": "Already registered, or plate number taken"
+          }
+        }
+      }
+    },
+    "/driver/profile": {
+      "get": {
+        "tags": [
+          "Driver"
+        ],
+        "summary": "Get the authenticated driver's profile",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/DriverProfileResponse"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not registered as a driver"
+          }
+        }
+      }
+    },
+    "/driver/online": {
+      "post": {
+        "tags": [
+          "Driver"
+        ],
+        "summary": "Go online",
+        "description": "Marks the driver online and publishes their live position so they appear in nearby-driver searches. Requires an approved driver profile and an active subscription.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoOnlineRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Now online",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/DriverProfileResponse"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not verified, or subscription inactive"
+          },
+          "404": {
+            "description": "Not registered as a driver"
+          }
+        }
+      }
+    },
+    "/driver/offline": {
+      "post": {
+        "tags": [
+          "Driver"
+        ],
+        "summary": "Go offline",
+        "description": "Marks the driver offline and removes them from nearby-driver searches.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Now offline"
+          },
+          "404": {
+            "description": "Not registered as a driver"
+          }
+        }
+      }
+    },
+    "/driver/location": {
+      "post": {
+        "tags": [
+          "Driver"
+        ],
+        "summary": "Send a location update",
+        "description": "Updates the driver's live position. Call periodically (every 5-10 seconds) while online — a driver who stops pinging is treated as stale and dropped from nearby-driver results after the configured timeout (default 45s).",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocationPingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Location updated"
+          },
+          "400": {
+            "description": "Driver is not currently online"
+          }
+        }
+      }
+    },
+    "/drivers/nearby": {
+      "get": {
+        "tags": [
+          "Driver"
+        ],
+        "summary": "Find nearby online drivers",
+        "description": "Passenger-facing: returns online drivers of the given vehicle type near a point, nearest first. Coordinates in the response are rounded, not exact, until a match is confirmed.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "vehicle_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "car",
+                "okada",
+                "keke",
+                "bus"
+              ]
+            }
+          },
+          {
+            "name": "lat",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          {
+            "name": "lng",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          {
+            "name": "radius_km",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "float",
+              "default": 5
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Nearby drivers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/NearbyDriverResponse"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing/invalid query parameters"
+          }
+        }
+      }
+    },
+    "/admin/drivers/{id}/verify": {
+      "patch": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Approve or reject a driver's documents",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminVerifyDriverRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verification updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/DriverProfileResponse"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not an admin"
+          },
+          "404": {
+            "description": "Driver not found"
+          }
+        }
+      }
+    },
+    "/admin/drivers/{id}/subscription": {
+      "patch": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Manually activate/extend a driver's subscription",
+        "description": "Stand-in for the Flutterwave payment webhook (not yet wired up) — grants the driver N days of platform access from now, or extends from their current expiry if still active.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminActivateSubscriptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Subscription activated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/DriverProfileResponse"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Caller is not an admin"
+          },
+          "404": {
+            "description": "Driver not found"
+          }
+        }
+      }
+    },
+    "/trips": {
+      "post": {
+        "tags": [
+          "Trips"
+        ],
+        "summary": "Request a trip",
+        "description": "Opens a new trip request and instantly notifies nearby online drivers of the matching vehicle type over WebSocket (and indexes it for GET /trips/nearby polling). A passenger may only have one active trip at a time.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTripRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Trip requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    }
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TripResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "409": {
+            "description": "Already have an active trip"
+          },
+          "429": {
+            "description": "Rate limited"
+          }
+        }
+      }
+    },
+    "/trips/active": {
+      "get": {
+        "tags": [
+          "Trips"
+        ],
+        "summary": "Get my current active trip",
+        "description": "Returns the caller's in-progress trip (requested/matched/picked_up), if any.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Active trip fetched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    }
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TripResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No active trip"
+          }
+        }
+      }
+    },
+    "/trips/nearby": {
+      "get": {
+        "tags": [
+          "Trips"
+        ],
+        "summary": "Find nearby open trip requests",
+        "description": "Driver-facing REST fallback for the WebSocket push — open (unmatched) trip requests near a point, for the given vehicle type, nearest first.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "vehicle_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "car",
+                "okada",
+                "keke",
+                "bus"
+              ]
+            }
+          },
+          {
+            "name": "lat",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          {
+            "name": "lng",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          {
+            "name": "radius_km",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Nearby trips fetched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    }
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/NearbyOpenTripResponse"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameters"
+          }
+        }
+      }
+    },
+    "/trips/{id}": {
+      "get": {
+        "tags": [
+          "Trips"
+        ],
+        "summary": "Get a trip",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Trip fetched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    }
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TripResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a participant"
+          },
+          "404": {
+            "description": "Trip not found"
+          }
+        }
+      }
+    },
+    "/trips/{id}/offers": {
+      "post": {
+        "tags": [
+          "Trips"
+        ],
+        "summary": "Make a price offer on a trip",
+        "description": "A driver proposes a price for an open trip request. Placing a new offer while one is already pending from the same driver updates that offer's price rather than creating a duplicate. Requires the driver to be online, verified, and subscribed.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MakeOfferRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Offer sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    }
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/OfferResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "403": {
+            "description": "Not eligible to make offers"
+          },
+          "429": {
+            "description": "Rate limited"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Trips"
+        ],
+        "summary": "List pending offers on a trip",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Offers fetched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    }
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/OfferResponse"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the trip owner"
+          }
+        }
+      }
+    },
+    "/trips/{id}/offers/{offerId}/accept": {
+      "post": {
+        "tags": [
+          "Trips"
+        ],
+        "summary": "Accept a driver's offer",
+        "description": "Matches the trip to the offering driver and generates a one-time pickup PIN, returned only in this response. Every other offering driver is notified the trip has closed.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "offerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Driver matched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    }
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AcceptOfferResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Trip or offer no longer open"
+          },
+          "403": {
+            "description": "Not the trip owner"
+          }
+        }
+      }
+    },
+    "/trips/{id}/offers/{offerId}/reject": {
+      "post": {
+        "tags": [
+          "Trips"
+        ],
+        "summary": "Reject a driver's offer",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "offerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Offer rejected"
+          },
+          "403": {
+            "description": "Not the trip owner"
+          }
+        }
+      }
+    },
+    "/trips/{id}/confirm-pickup": {
+      "post": {
+        "tags": [
+          "Trips"
+        ],
+        "summary": "Confirm pickup with the passenger's PIN",
+        "description": "The driver enters the 4-digit PIN the passenger shows them in person, proving the pickup actually happened.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmPickupRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pickup confirmed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    }
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TripResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Incorrect PIN"
+          },
+          "403": {
+            "description": "Not the matched driver"
+          }
+        }
+      }
+    },
+    "/trips/{id}/complete": {
+      "post": {
+        "tags": [
+          "Trips"
+        ],
+        "summary": "Mark a trip complete",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Trip completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    }
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TripResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the matched driver"
+          }
+        }
+      }
+    },
+    "/trips/{id}/cancel": {
+      "post": {
+        "tags": [
+          "Trips"
+        ],
+        "summary": "Cancel a trip",
+        "description": "Either the passenger or the matched driver may cancel, but only before pickup is confirmed.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelTripRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Trip cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    }
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/TripResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Trip can no longer be cancelled"
+          },
+          "403": {
+            "description": "Not a participant"
+          }
+        }
+      }
+    },
+    "/ws": {
+      "get": {
+        "tags": [
+          "Realtime"
+        ],
+        "summary": "Open a real-time event connection",
+        "description": "Upgrades to a WebSocket connection that pushes trip lifecycle events (new offers, match confirmed, pickup confirmed, trip completed/cancelled) the instant they happen, instead of the app having to poll. Authenticate by passing the access token as a query parameter, since standard WebSocket clients cannot set an Authorization header during the handshake: `wss://.../ws?token=<access_token>`. Every event pushed here is also readable via the corresponding REST endpoint — treat this as a low-latency notification channel, not the source of truth. Message envelope: `{\"type\": \"trip.matched\", \"data\": {...}}`.",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching Protocols"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          }
+        }
+      }
+    },
+    "/driver/subscription/checkout": {
+      "post": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "Start a driver subscription payment",
+        "description": "Creates a Flutterwave hosted-checkout link for N days of platform access (default 1, max 30). Nothing is granted yet — access activates only once the payment webhook confirms the charge; poll GET /driver/profile afterward to see `has_active_subscription` flip to true.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InitiateSubscriptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Checkout link created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/APIResponse"
+                    }
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/InitiateSubscriptionResponse"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not registered as a driver yet"
+          }
+        }
+      }
+    },
+    "/webhooks/flutterwave": {
+      "post": {
+        "tags": [
+          "Payments"
+        ],
+        "summary": "Flutterwave payment webhook",
+        "description": "Called by Flutterwave when a charge completes. Verified two ways before anything is credited: the `verif-hash` header must match FLW_WEBHOOK_SECRET_HASH, and the transaction is independently re-fetched from Flutterwave's API before the driver's subscription is activated. Configure this URL as your webhook endpoint in the Flutterwave dashboard. Not for use by API clients directly.",
+        "parameters": [
+          {
+            "name": "verif-hash",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Shared secret configured in the Flutterwave dashboard"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlutterwaveWebhookPayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook processed (or safely ignored, e.g. an unhandled event type)"
+          },
+          "401": {
+            "description": "Invalid or missing verif-hash"
+          }
+        }
+      }
+    }
+  }
+}

@@ -128,4 +128,54 @@ var (
 	// ErrInvalidVehicleType is returned when a vehicle type string isn't
 	// one of car/okada/keke/bus.
 	ErrInvalidVehicleType = errors.New("invalid vehicle type")
+
+	// ErrVehicleTypeDisabled is returned when someone tries to register
+	// as a driver of a vehicle type an admin has currently turned off.
+	ErrVehicleTypeDisabled = errors.New("this vehicle type is not currently accepting new drivers")
+
+	// ErrMissingRequiredDocuments is returned when a driver registration
+	// doesn't include every document the vehicle type's admin-defined
+	// list marks as required.
+	ErrMissingRequiredDocuments = errors.New("please upload all required documents for your vehicle type")
+
+	// ErrDocumentTypeNotFound is returned when an admin document-type ID
+	// doesn't exist.
+	ErrDocumentTypeNotFound = errors.New("document type not found")
+
+	// ErrSubscriptionPlanUnavailable is returned when a driver tries to
+	// check out a billing cycle that isn't currently enabled (or has no
+	// price set) for their vehicle type.
+	ErrSubscriptionPlanUnavailable = errors.New("this payment plan is not currently available for your vehicle type")
+
+	// ErrVehicleMakeNotFound is returned when an admin or driver
+	// references a make ID that doesn't exist.
+	ErrVehicleMakeNotFound = errors.New("vehicle make not found")
+
+	// ErrVehicleModelNotFound is returned when an admin or driver
+	// references a model ID that doesn't exist.
+	ErrVehicleModelNotFound = errors.New("vehicle model not found")
+
+	// ErrVehicleModelMakeMismatch is returned when a registration names
+	// a model ID that exists but belongs to a different make than the
+	// make ID it was submitted alongside.
+	ErrVehicleModelMakeMismatch = errors.New("that model does not belong to the selected make")
+
+	// ErrVehicleCatalogEntryDisabled is returned when a driver tries to
+	// register with a make/model an admin has since disabled.
+	ErrVehicleCatalogEntryDisabled = errors.New("that vehicle make/model is no longer available")
+
+	// ErrDuplicateVehicleMake is returned when creating a make whose
+	// name (case-insensitive) already exists for that vehicle type.
+	ErrDuplicateVehicleMake = errors.New("this make already exists for this vehicle type")
+
+	// ErrDuplicateVehicleModel is returned when creating a model whose
+	// name (case-insensitive) already exists under that make.
+	ErrDuplicateVehicleModel = errors.New("this model already exists under this make")
+)
+
+// Tracking errors.
+var (
+	ErrShiftNotFound = errors.New("shift not found")
+	ErrShiftClosed   = errors.New("this shift ended too long ago to accept more points")
+	ErrInvalidPoint  = errors.New("invalid location point")
 )

@@ -115,6 +115,126 @@ func (g *fakeGateway) VerifyTransaction(_ context.Context, _ string) (*flutterwa
 	return g.verifyResult, g.verifyErr
 }
 
+// fakeSubscriptionPlanRepo is an in-memory stand-in for
+// SubscriptionPlanRepository — only what PaymentService's tests need
+// (look up one vehicle type's plans by cycle).
+type fakeSubscriptionPlanRepo struct {
+	plans map[string]*models.SubscriptionPlan
+}
+
+func newFakeSubscriptionPlanRepo() *fakeSubscriptionPlanRepo {
+	return &fakeSubscriptionPlanRepo{plans: map[string]*models.SubscriptionPlan{}}
+}
+
+func planKey(vt models.VehicleType, c models.BillingCycle) string {
+	return string(vt) + "|" + string(c)
+}
+
+func (r *fakeSubscriptionPlanRepo) set(vt models.VehicleType, c models.BillingCycle, enabled bool, priceKobo int64) {
+	r.plans[planKey(vt, c)] = &models.SubscriptionPlan{VehicleType: vt, BillingCycle: c, Enabled: enabled, PriceKobo: priceKobo}
+}
+func (r *fakeSubscriptionPlanRepo) FindAll(_ context.Context) ([]models.SubscriptionPlan, error) {
+	out := make([]models.SubscriptionPlan, 0, len(r.plans))
+	for _, p := range r.plans {
+		out = append(out, *p)
+	}
+	return out, nil
+}
+func (r *fakeSubscriptionPlanRepo) FindByVehicleType(_ context.Context, vt models.VehicleType) ([]models.SubscriptionPlan, error) {
+	out := make([]models.SubscriptionPlan, 0)
+	for _, p := range r.plans {
+		if p.VehicleType == vt {
+			out = append(out, *p)
+		}
+	}
+	return out, nil
+}
+func (r *fakeSubscriptionPlanRepo) FindEnabledByVehicleType(_ context.Context, vt models.VehicleType) ([]models.SubscriptionPlan, error) {
+	out := make([]models.SubscriptionPlan, 0)
+	for _, p := range r.plans {
+		if p.VehicleType == vt && p.Enabled {
+			out = append(out, *p)
+		}
+	}
+	return out, nil
+}
+func (r *fakeSubscriptionPlanRepo) FindByVehicleTypeAndCycle(_ context.Context, vt models.VehicleType, c models.BillingCycle) (*models.SubscriptionPlan, error) {
+	p, ok := r.plans[planKey(vt, c)]
+	if !ok {
+		return nil, repository.ErrNotFound
+	}
+	return p, nil
+}
+func (r *fakeSubscriptionPlanRepo) Upsert(_ context.Context, p *models.SubscriptionPlan) error {
+	r.plans[planKey(p.VehicleType, p.BillingCycle)] = p
+	return nil
+}
+
+// fakeVehicleTypeConfigRepo and fakeDocumentTypeRepo are unused by any
+// payment-service test but SettingsService needs something satisfying
+// both interfaces to construct.
+type fakeVehicleTypeConfigRepo struct{}
+
+func (fakeVehicleTypeConfigRepo) FindAll(_ context.Context) ([]models.VehicleTypeConfig, error) {
+	return nil, nil
+}
+func (fakeVehicleTypeConfigRepo) FindByVehicleType(_ context.Context, _ models.VehicleType) (*models.VehicleTypeConfig, error) {
+	return nil, repository.ErrNotFound
+}
+func (fakeVehicleTypeConfigRepo) Upsert(_ context.Context, _ *models.VehicleTypeConfig) error {
+	return nil
+}
+
+type fakeDocumentTypeRepo struct{}
+
+func (fakeDocumentTypeRepo) FindAll(_ context.Context) ([]models.DocumentType, error) {
+	return nil, nil
+}
+func (fakeDocumentTypeRepo) FindByVehicleType(_ context.Context, _ models.VehicleType) ([]models.DocumentType, error) {
+	return nil, nil
+}
+func (fakeDocumentTypeRepo) FindEnabledByVehicleType(_ context.Context, _ models.VehicleType) ([]models.DocumentType, error) {
+	return nil, nil
+}
+func (fakeDocumentTypeRepo) FindByID(_ context.Context, _ string) (*models.DocumentType, error) {
+	return nil, repository.ErrNotFound
+}
+func (fakeDocumentTypeRepo) Create(_ context.Context, _ *models.DocumentType) error { return nil }
+func (fakeDocumentTypeRepo) Update(_ context.Context, _ *models.DocumentType) error { return nil }
+func (fakeDocumentTypeRepo) Delete(_ context.Context, _ string) error               { return nil }
+
+type fakeVehicleCatalogRepo struct{}
+
+func (fakeVehicleCatalogRepo) FindMakesByVehicleType(_ context.Context, _ models.VehicleType) ([]models.VehicleMake, error) {
+	return nil, nil
+}
+func (fakeVehicleCatalogRepo) FindMakeByID(_ context.Context, _ string) (*models.VehicleMake, error) {
+	return nil, repository.ErrNotFound
+}
+func (fakeVehicleCatalogRepo) FindMakeByName(_ context.Context, _ models.VehicleType, _ string) (*models.VehicleMake, error) {
+	return nil, repository.ErrNotFound
+}
+func (fakeVehicleCatalogRepo) CreateMake(_ context.Context, _ *models.VehicleMake) error { return nil }
+func (fakeVehicleCatalogRepo) UpdateMake(_ context.Context, _ *models.VehicleMake) error { return nil }
+func (fakeVehicleCatalogRepo) DeleteMake(_ context.Context, _ string) error              { return nil }
+func (fakeVehicleCatalogRepo) FindModelByID(_ context.Context, _ string) (*models.VehicleModel, error) {
+	return nil, repository.ErrNotFound
+}
+func (fakeVehicleCatalogRepo) FindModelByName(_ context.Context, _ string, _ string) (*models.VehicleModel, error) {
+	return nil, repository.ErrNotFound
+}
+func (fakeVehicleCatalogRepo) CreateModel(_ context.Context, _ *models.VehicleModel) error {
+	return nil
+}
+func (fakeVehicleCatalogRepo) UpdateModel(_ context.Context, _ *models.VehicleModel) error {
+	return nil
+}
+func (fakeVehicleCatalogRepo) DeleteModel(_ context.Context, _ string) error { return nil }
+
+func newTestSettingsService(plans *fakeSubscriptionPlanRepo) *SettingsService {
+	return NewSettingsService(fakeVehicleTypeConfigRepo{}, plans, fakeDocumentTypeRepo{}, fakeVehicleCatalogRepo{})
+}
+
 func newTestDriverProfile() *models.DriverProfile {
 	return &models.DriverProfile{
 		Base:        models.Base{ID: "driver-1"},
@@ -132,18 +252,24 @@ func TestInitiateSubscriptionCheckout_ComputesAmountAndPersistsTransaction(t *te
 	driverRepo := newFakeDriverRepo(driver)
 	paymentRepo := newFakePaymentRepo()
 	gw := &fakeGateway{initiateLink: "https://checkout.flutterwave.com/pay/abc123"}
-	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
-	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, gw, 100000 /* NGN 1000 */, "secret", "https://ridematch.app/callback")
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	plans := newFakeSubscriptionPlanRepo()
+	plans.set(models.VehicleCar, models.BillingWeekly, true, 350000)
+	settings := newTestSettingsService(plans)
+	svc := NewPaymentService(paymentRepo, driverRepo, settings, admin, gw, "secret", "https://ridematch.app/callback")
 
-	resp, err := svc.InitiateSubscriptionCheckout(context.Background(), "user-1", dto.InitiateSubscriptionRequest{Days: 3})
+	resp, err := svc.InitiateSubscriptionCheckout(context.Background(), "user-1", dto.InitiateSubscriptionRequest{BillingCycle: "weekly"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if resp.AmountKobo != 300000 {
-		t.Errorf("expected amount 300000 kobo (3 x 100000), got %d", resp.AmountKobo)
+	if resp.AmountKobo != 350000 {
+		t.Errorf("expected amount 350000 kobo (the admin-set weekly price), got %d", resp.AmountKobo)
 	}
-	if resp.Days != 3 {
-		t.Errorf("expected days=3, got %d", resp.Days)
+	if resp.Days != 7 {
+		t.Errorf("expected days=7 (one week), got %d", resp.Days)
+	}
+	if resp.BillingCycle != "weekly" {
+		t.Errorf("expected billing_cycle=weekly, got %s", resp.BillingCycle)
 	}
 	if resp.PaymentLink != "https://checkout.flutterwave.com/pay/abc123" {
 		t.Errorf("unexpected payment link: %s", resp.PaymentLink)
@@ -161,20 +287,44 @@ func TestInitiateSubscriptionCheckout_ComputesAmountAndPersistsTransaction(t *te
 	}
 }
 
-func TestInitiateSubscriptionCheckout_DefaultsToOneDay(t *testing.T) {
+func TestInitiateSubscriptionCheckout_DailyPlan(t *testing.T) {
 	driver := newTestDriverProfile()
 	driverRepo := newFakeDriverRepo(driver)
 	paymentRepo := newFakePaymentRepo()
 	gw := &fakeGateway{initiateLink: "https://checkout.example/x"}
-	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
-	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, gw, 100000, "secret", "https://x")
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	plans := newFakeSubscriptionPlanRepo()
+	plans.set(models.VehicleCar, models.BillingDaily, true, 100000)
+	settings := newTestSettingsService(plans)
+	svc := NewPaymentService(paymentRepo, driverRepo, settings, admin, gw, "secret", "https://x")
 
-	resp, err := svc.InitiateSubscriptionCheckout(context.Background(), "user-1", dto.InitiateSubscriptionRequest{})
+	resp, err := svc.InitiateSubscriptionCheckout(context.Background(), "user-1", dto.InitiateSubscriptionRequest{BillingCycle: "daily"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if resp.Days != 1 || resp.AmountKobo != 100000 {
-		t.Errorf("expected 1 day / 100000 kobo default, got days=%d amount=%d", resp.Days, resp.AmountKobo)
+		t.Errorf("expected 1 day / 100000 kobo for the daily plan, got days=%d amount=%d", resp.Days, resp.AmountKobo)
+	}
+}
+
+func TestInitiateSubscriptionCheckout_DisabledCycleIsRejected(t *testing.T) {
+	driver := newTestDriverProfile()
+	driverRepo := newFakeDriverRepo(driver)
+	paymentRepo := newFakePaymentRepo()
+	gw := &fakeGateway{}
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	plans := newFakeSubscriptionPlanRepo()
+	// Only yearly is enabled for this vehicle type — daily exists as a row
+	// but is turned off, exactly like an admin who's only turned on one
+	// cycle.
+	plans.set(models.VehicleCar, models.BillingDaily, false, 100000)
+	plans.set(models.VehicleCar, models.BillingYearly, true, 2000000)
+	settings := newTestSettingsService(plans)
+	svc := NewPaymentService(paymentRepo, driverRepo, settings, admin, gw, "secret", "https://x")
+
+	_, err := svc.InitiateSubscriptionCheckout(context.Background(), "user-1", dto.InitiateSubscriptionRequest{BillingCycle: "daily"})
+	if !errors.Is(err, ErrSubscriptionPlanUnavailable) {
+		t.Fatalf("expected ErrSubscriptionPlanUnavailable for a disabled cycle, got %v", err)
 	}
 }
 
@@ -182,10 +332,11 @@ func TestInitiateSubscriptionCheckout_UnknownDriverReturnsNotFound(t *testing.T)
 	driverRepo := newFakeDriverRepo()
 	paymentRepo := newFakePaymentRepo()
 	gw := &fakeGateway{}
-	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
-	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, gw, 100000, "secret", "https://x")
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	settings := newTestSettingsService(newFakeSubscriptionPlanRepo())
+	svc := NewPaymentService(paymentRepo, driverRepo, settings, admin, gw, "secret", "https://x")
 
-	_, err := svc.InitiateSubscriptionCheckout(context.Background(), "someone-not-a-driver", dto.InitiateSubscriptionRequest{})
+	_, err := svc.InitiateSubscriptionCheckout(context.Background(), "someone-not-a-driver", dto.InitiateSubscriptionRequest{BillingCycle: "daily"})
 	if !errors.Is(err, ErrDriverProfileNotFound) {
 		t.Fatalf("expected ErrDriverProfileNotFound, got %v", err)
 	}
@@ -205,8 +356,9 @@ func webhookPayload(id int64, txRef, status string, amount float64) dto.Flutterw
 func TestHandleWebhook_RejectsBadSignature(t *testing.T) {
 	driverRepo := newFakeDriverRepo(newTestDriverProfile())
 	paymentRepo := newFakePaymentRepo()
-	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
-	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, &fakeGateway{}, 100000, "correct-secret", "https://x")
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	settings := newTestSettingsService(newFakeSubscriptionPlanRepo())
+	svc := NewPaymentService(paymentRepo, driverRepo, settings, admin, &fakeGateway{}, "correct-secret", "https://x")
 
 	err := svc.HandleWebhook(context.Background(), "wrong-secret", webhookPayload(1, "sub_x", "successful", 1000))
 	if !errors.Is(err, ErrInvalidWebhookSignature) {
@@ -218,7 +370,7 @@ func TestHandleWebhook_SuccessfulPaymentActivatesSubscription(t *testing.T) {
 	driver := newTestDriverProfile()
 	driverRepo := newFakeDriverRepo(driver)
 	paymentRepo := newFakePaymentRepo()
-	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, 0)
 
 	// Seed a pending transaction exactly as InitiateSubscriptionCheckout would.
 	tx := &models.PaymentTransaction{
@@ -230,7 +382,8 @@ func TestHandleWebhook_SuccessfulPaymentActivatesSubscription(t *testing.T) {
 	gw := &fakeGateway{verifyResult: &flutterwave.VerifyResult{
 		FlwTransactionID: "999", TxRef: "sub_abc", Status: "successful", AmountKobo: 200000, Currency: "NGN",
 	}}
-	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, gw, 100000, "secret", "https://x")
+	settings := newTestSettingsService(newFakeSubscriptionPlanRepo())
+	svc := NewPaymentService(paymentRepo, driverRepo, settings, admin, gw, "secret", "https://x")
 
 	if driver.HasActiveSubscription() {
 		t.Fatal("driver should not have an active subscription before the webhook fires")
@@ -262,7 +415,7 @@ func TestHandleWebhook_IsIdempotentOnRetry(t *testing.T) {
 	driver := newTestDriverProfile()
 	driverRepo := newFakeDriverRepo(driver)
 	paymentRepo := newFakePaymentRepo()
-	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, 0)
 
 	tx := &models.PaymentTransaction{
 		Base: models.Base{ID: "tx-1"}, DriverID: "driver-1", TxRef: "sub_abc",
@@ -274,7 +427,8 @@ func TestHandleWebhook_IsIdempotentOnRetry(t *testing.T) {
 	gw := &countingGateway{fakeGateway: fakeGateway{verifyResult: &flutterwave.VerifyResult{
 		FlwTransactionID: "1", TxRef: "sub_abc", Status: "successful", AmountKobo: 100000, Currency: "NGN",
 	}}, calls: &callCount}
-	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, gw, 100000, "secret", "https://x")
+	settings := newTestSettingsService(newFakeSubscriptionPlanRepo())
+	svc := NewPaymentService(paymentRepo, driverRepo, settings, admin, gw, "secret", "https://x")
 
 	payload := webhookPayload(1, "sub_abc", "successful", 1000)
 
@@ -301,7 +455,7 @@ func TestHandleWebhook_AmountMismatchIsRejectedAndMarkedFailed(t *testing.T) {
 	driver := newTestDriverProfile()
 	driverRepo := newFakeDriverRepo(driver)
 	paymentRepo := newFakePaymentRepo()
-	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, 0)
 
 	tx := &models.PaymentTransaction{
 		Base: models.Base{ID: "tx-1"}, DriverID: "driver-1", TxRef: "sub_abc",
@@ -315,7 +469,8 @@ func TestHandleWebhook_AmountMismatchIsRejectedAndMarkedFailed(t *testing.T) {
 	gw := &fakeGateway{verifyResult: &flutterwave.VerifyResult{
 		FlwTransactionID: "1", TxRef: "sub_abc", Status: "successful", AmountKobo: 100, Currency: "NGN",
 	}}
-	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, gw, 100000, "secret", "https://x")
+	settings := newTestSettingsService(newFakeSubscriptionPlanRepo())
+	svc := NewPaymentService(paymentRepo, driverRepo, settings, admin, gw, "secret", "https://x")
 
 	err := svc.HandleWebhook(context.Background(), "secret", webhookPayload(1, "sub_abc", "successful", 5000))
 	if !errors.Is(err, ErrPaymentVerificationFailed) {
@@ -333,8 +488,9 @@ func TestHandleWebhook_AmountMismatchIsRejectedAndMarkedFailed(t *testing.T) {
 func TestHandleWebhook_IgnoresNonChargeCompletedEvents(t *testing.T) {
 	driverRepo := newFakeDriverRepo(newTestDriverProfile())
 	paymentRepo := newFakePaymentRepo()
-	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, 0)
-	svc := NewPaymentService(paymentRepo, driverRepo, nil, admin, &fakeGateway{}, 100000, "secret", "https://x")
+	admin := NewAdminService(driverRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, 0)
+	settings := newTestSettingsService(newFakeSubscriptionPlanRepo())
+	svc := NewPaymentService(paymentRepo, driverRepo, settings, admin, &fakeGateway{}, "secret", "https://x")
 
 	payload := dto.FlutterwaveWebhookPayload{}
 	payload.Event = "transfer.completed" // not the event this app acts on

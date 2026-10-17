@@ -1,6 +1,6 @@
 // Package push abstracts sending a mobile push notification behind a
 // single interface, mirroring internal/sms and internal/email — the
-// notification service never depends on a specific provider. RideMatch's
+// notification service never depends on a specific provider. MakeWeRide's
 // app is Expo-managed, so the only provider today is Expo's push service,
 // which itself fans out to APNs/FCM; there is no per-platform code here.
 package push

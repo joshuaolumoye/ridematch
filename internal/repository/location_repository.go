@@ -57,6 +57,12 @@ type LocationRepository interface {
 	// needed, unlike FindNearby. Used by the admin "riders by location"
 	// map, which shows every online driver at once.
 	ListOnline(ctx context.Context, vehicleType models.VehicleType, staleAfter time.Duration) ([]NearbyDriver, error)
+
+	// GetLocation returns one driver's current live position — nil
+	// (not an error) if they have none on record or it's gone stale.
+	// Used to surface a matched/picked-up driver's position on the
+	// passenger's trip-tracking map.
+	GetLocation(ctx context.Context, driverID string, vehicleType models.VehicleType, staleAfter time.Duration) (*NearbyDriver, error)
 }
 
 type redisLocationRepository struct {
@@ -210,6 +216,35 @@ func (r *redisLocationRepository) ListOnline(ctx context.Context, vehicleType mo
 		})
 	}
 	return results, nil
+}
+
+func (r *redisLocationRepository) GetLocation(ctx context.Context, driverID string, vehicleType models.VehicleType, staleAfter time.Duration) (*NearbyDriver, error) {
+	positions, err := r.client.GeoPos(ctx, geoKey(vehicleType), driverID).Result()
+	if err != nil {
+		return nil, fmt.Errorf("repository: failed to fetch driver position: %w", err)
+	}
+	if len(positions) == 0 || positions[0] == nil {
+		return nil, nil
+	}
+
+	lastSeen, err := r.client.HGet(ctx, lastSeenKey, driverID).Result()
+	if err != nil && err != redis.Nil {
+		return nil, fmt.Errorf("repository: failed to check driver staleness: %w", err)
+	}
+	if err == redis.Nil {
+		return nil, nil
+	}
+
+	ms, ok := parseUnixMillis(lastSeen)
+	if !ok || ms < time.Now().Add(-staleAfter).UnixMilli() {
+		return nil, nil
+	}
+
+	return &NearbyDriver{
+		DriverID:  driverID,
+		Latitude:  positions[0].Latitude,
+		Longitude: positions[0].Longitude,
+	}, nil
 }
 
 // parseUnixMillis converts an HMGET result (interface{} holding a string)

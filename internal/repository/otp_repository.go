@@ -22,6 +22,12 @@ type OTPRepository interface {
 	// used to enforce the resend cooldown.
 	FindLatestAny(ctx context.Context, identifier string, purpose models.OTPPurpose) (*models.OTPRequest, error)
 	Update(ctx context.Context, otp *models.OTPRequest) error
+	// Delete removes one OTP request row (soft delete). Used to undo a
+	// just-created row when dispatch (SMS/email) fails right after
+	// persisting it — without this, a dispatch failure would otherwise
+	// leave a row behind that blocks the resend cooldown for a user who
+	// never actually received a code.
+	Delete(ctx context.Context, id string) error
 	// DeleteExpired removes stale rows older than the given cutoff; intended
 	// to be called periodically (e.g. from a cron job) to keep the table
 	// small. Not required for correctness, only housekeeping.
@@ -73,6 +79,10 @@ func (r *otpRepository) FindLatestAny(ctx context.Context, identifier string, pu
 
 func (r *otpRepository) Update(ctx context.Context, otp *models.OTPRequest) error {
 	return r.db.WithContext(ctx).Save(otp).Error
+}
+
+func (r *otpRepository) Delete(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Delete(&models.OTPRequest{}, "id = ?", id).Error
 }
 
 func (r *otpRepository) DeleteExpired(ctx context.Context, olderThan time.Time) error {

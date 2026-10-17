@@ -13,7 +13,7 @@ const expoPushSendURL = "https://exp.host/--/api/v2/push/send"
 
 // ExpoSender sends push notifications via Expo's push service — the
 // standard delivery path for an Expo-managed app, which forwards to
-// APNs (iOS) or FCM (Android) on RideMatch's behalf. No per-platform
+// APNs (iOS) or FCM (Android) on MakeWeRide's behalf. No per-platform
 // credentials are needed here; Expo holds those.
 type ExpoSender struct {
 	accessToken string // optional: Expo's "enhanced security" push access token

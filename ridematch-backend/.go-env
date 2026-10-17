@@ -1,0 +1,18 @@
+# Source this file (or copy into your shell profile) before running any `go`
+# command in this project: `source .go-env`
+#
+# Why: the module proxy (proxy.golang.org) and golang.org/x/* vanity import
+# domains are not reachable from this build environment's network policy.
+# go.mod uses `replace` directives to redirect every such module to its
+# canonical mirror on github.com instead, and these env vars make `go`
+# fetch directly from git (GOPROXY=direct) without needing the checksum
+# database (GOSUMDB=off, since sum.golang.org is unreachable too).
+#
+# On a normal machine with unrestricted internet access, none of this is
+# required — plain `go build` / `go mod tidy` will work fine even with the
+# replace directives left in place (they simply pin known-good versions).
+
+export GOPROXY=direct
+export GOSUMDB=off
+export GOPRIVATE=*
+export GOTOOLCHAIN=local

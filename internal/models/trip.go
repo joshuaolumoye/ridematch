@@ -30,9 +30,10 @@ const (
 
 // Trip is a passenger's ride/logistics request: where they are, where
 // they're going, and its progress through negotiation, matching, pickup
-// confirmation, and completion. Trip fares settle offline between
-// passenger and driver — Trip.AgreedPriceKobo is a record of what was
-// agreed, not a charge the platform processes.
+// confirmation, and completion. When ESCROW_REQUIRED is on (default), the
+// agreed fare is moved from the passenger's wallet into escrow the moment
+// a driver is confirmed, and released to the driver's wallet when the trip
+// completes (see EscrowHold). The platform takes no commission on fares.
 type Trip struct {
 	Base
 
@@ -57,6 +58,7 @@ type Trip struct {
 	// shows the driver in person to confirm pickup actually happened —
 	// never returned to the driver, only compared server-side.
 	PickupPINHash     string     `gorm:"type:varchar(100)" json:"-"`
+	MatchedAt         *time.Time `json:"matched_at,omitempty"`
 	PickupConfirmedAt *time.Time `json:"pickup_confirmed_at,omitempty"`
 	CompletedAt       *time.Time `json:"completed_at,omitempty"`
 

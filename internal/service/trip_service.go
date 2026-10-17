@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"ridematch-backend/internal/dto"
@@ -52,7 +53,26 @@ type TripService struct {
 	// FindNearby's lazy-eviction side effect, would incorrectly drop them
 	// from the geo index entirely.
 	locationStaleAfter time.Duration
+
+	// shareTokenSecret signs the opaque, stateless tokens behind a
+	// "share my live location" link (see utils.GenerateShareToken) — a
+	// separate HMAC purpose from JWT auth tokens even when the same
+	// underlying secret value is reused, since GenerateShareToken's
+	// payload format ("trip:<id>:<expiry>") can never be mistaken for a
+	// real access token.
+	shareTokenSecret string
+	// publicBaseURL is the externally reachable origin a share link is
+	// built against (APP_PUBLIC_URL) — never the internal/private
+	// address the API might also be reachable on.
+	publicBaseURL string
+
+	// escrow holds the passenger's fare between match and completion. Nil
+	// disables payment handling entirely (all methods are nil-safe).
+	escrow *EscrowService
 }
+
+// SetEscrow wires in the escrow service.
+func (s *TripService) SetEscrow(e *EscrowService) { s.escrow = e }
 
 // NewTripService constructs a TripService from its dependencies.
 func NewTripService(
@@ -70,6 +90,8 @@ func NewTripService(
 	nearbyLimit int,
 	coordinatePrecision int,
 	locationStaleAfter time.Duration,
+	shareTokenSecret string,
+	publicBaseURL string,
 ) *TripService {
 	return &TripService{
 		trips:               trips,
@@ -86,7 +108,86 @@ func NewTripService(
 		nearbyLimit:         nearbyLimit,
 		coordinatePrecision: coordinatePrecision,
 		locationStaleAfter:  locationStaleAfter,
+		shareTokenSecret:    shareTokenSecret,
+		publicBaseURL:       strings.TrimRight(publicBaseURL, "/"),
 	}
+}
+
+// shareLinkTTL is how long a live-location share link stays valid once
+// created — long enough to cover a slow trip plus some buffer, short
+// enough that an old link shared once doesn't keep working indefinitely.
+const shareLinkTTL = 6 * time.Hour
+
+// CreateShareLink mints a public, no-login link to this trip's live
+// tracking view, for either the passenger or the matched driver to hand
+// to anyone else (over WhatsApp, SMS, email, or any other channel). Both
+// sides of a trip are allowed — a driver, too, is one person's
+// perfectly reasonable "let my family know where I am" safety need.
+func (s *TripService) CreateShareLink(ctx context.Context, callerUserID, tripID string) (*dto.ShareLocationResponse, error) {
+	trip, err := s.trips.FindByID(ctx, tripID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrTripNotFound
+		}
+		return nil, fmt.Errorf("service: failed to load trip: %w", err)
+	}
+
+	isPassenger := trip.PassengerID == callerUserID
+	isDriver := trip.Driver != nil && trip.Driver.UserID == callerUserID
+	if !isPassenger && !isDriver {
+		return nil, ErrNotTripOwner
+	}
+
+	token, expiresAt := utils.GenerateShareToken(s.shareTokenSecret, trip.ID, shareLinkTTL)
+	return &dto.ShareLocationResponse{
+		URL:       fmt.Sprintf("%s/t/%s", s.publicBaseURL, token),
+		ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
+	}, nil
+}
+
+// GetPublicTracking resolves a share token into the trimmed, no-auth
+// view of a trip served to whoever opens the link — never the full
+// TripResponse (no phone numbers, no email, no pricing).
+func (s *TripService) GetPublicTracking(ctx context.Context, token string) (*dto.PublicTrackingResponse, error) {
+	tripID, expiresAt, err := utils.ParseShareTokenWithExpiry(s.shareTokenSecret, token)
+	if err != nil {
+		return nil, err
+	}
+
+	trip, err := s.trips.FindByID(ctx, tripID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, utils.ErrInvalidShareToken
+		}
+		return nil, fmt.Errorf("service: failed to load trip: %w", err)
+	}
+
+	resp := &dto.PublicTrackingResponse{
+		Status:             string(trip.Status),
+		VehicleType:        string(trip.VehicleType),
+		PickupLat:          trip.PickupLat,
+		PickupLng:          trip.PickupLng,
+		PickupAddress:      trip.PickupAddress,
+		DestinationLat:     trip.DestinationLat,
+		DestinationLng:     trip.DestinationLng,
+		DestinationAddress: trip.DestinationAddress,
+		ExpiresAt:          expiresAt.UTC().Format(time.RFC3339),
+	}
+
+	if trip.Driver != nil {
+		resp.PlateNumber = trip.Driver.PlateNumber
+		if trip.Driver.User != nil {
+			resp.DriverName = trip.Driver.User.Name
+		}
+		if trip.Status == models.TripMatched || trip.Status == models.TripPickedUp {
+			if loc, err := s.driverLocations.GetLocation(ctx, trip.Driver.ID, trip.Driver.VehicleType, s.locationStaleAfter); err == nil && loc != nil {
+				resp.Latitude = &loc.Latitude
+				resp.Longitude = &loc.Longitude
+			}
+		}
+	}
+
+	return resp, nil
 }
 
 // CreateTrip opens a new trip request, indexes it for nearby-driver
@@ -99,6 +200,10 @@ func (s *TripService) CreateTrip(ctx context.Context, passengerUserID string, re
 		return nil, ErrTripAlreadyActive
 	} else if !errors.Is(err, repository.ErrNotFound) {
 		return nil, fmt.Errorf("service: failed to check active trip: %w", err)
+	}
+
+	if err := s.escrow.EnsureCanAfford(ctx, passengerUserID, req.OfferedPriceKobo); err != nil {
+		return nil, err
 	}
 
 	trip := &models.Trip{
@@ -471,18 +576,35 @@ func (s *TripService) AcceptOffer(ctx context.Context, passengerUserID, tripID, 
 		return nil, fmt.Errorf("service: failed to check driver availability: %w", err)
 	}
 
+	// Take the fare from the passenger's wallet into escrow BEFORE
+	// committing to the match, so a passenger who can't pay never ties up a
+	// driver. Only the call that actually took the money may undo it.
+	holdTaken, err := s.escrow.Hold(ctx, trip, profile, offer.PriceKobo)
+	if err != nil {
+		return nil, err
+	}
+	undoHold := func() {
+		if holdTaken {
+			s.escrow.Refund(ctx, tripID, "match did not complete")
+		}
+	}
+
 	// Claim the offer first (cheap, single-row CAS): if this fails,
 	// someone else (or a duplicate/racing request) already resolved it.
 	claimed, err := s.offers.CompareAndSwapStatus(ctx, offer.ID, models.OfferPending, models.OfferAccepted)
 	if err != nil {
+		undoHold()
 		return nil, fmt.Errorf("service: failed to claim offer: %w", err)
 	}
 	if !claimed {
+		undoHold()
 		return nil, ErrOfferNotPending
 	}
 
 	pin, pinHash, err := generatePickupPIN()
 	if err != nil {
+		undoHold()
+		_, _ = s.offers.CompareAndSwapStatus(ctx, offer.ID, models.OfferAccepted, models.OfferPending)
 		return nil, err
 	}
 
@@ -491,11 +613,15 @@ func (s *TripService) AcceptOffer(ctx context.Context, passengerUserID, tripID, 
 		"driver_id":         profile.ID,
 		"agreed_price_kobo": offer.PriceKobo,
 		"pickup_pin_hash":   pinHash,
+		"matched_at":        time.Now(),
 	})
 	if err != nil {
+		undoHold()
+		_, _ = s.offers.CompareAndSwapStatus(ctx, offer.ID, models.OfferAccepted, models.OfferPending)
 		return nil, fmt.Errorf("service: failed to match trip: %w", err)
 	}
 	if !matched {
+		undoHold()
 		// The offer claim succeeded but the trip itself was closed by a
 		// concurrent request (e.g. the passenger cancelled at the same
 		// instant). Roll the offer claim back so it isn't left stranded
@@ -663,6 +789,8 @@ func (s *TripService) CompleteTrip(ctx context.Context, driverUserID, tripID str
 		return nil, fmt.Errorf("service: failed to reload trip: %w", err)
 	}
 
+	s.escrow.OnTripCompleted(ctx, trip)
+
 	resp := s.toTripResponse(ctx, trip)
 	s.hub.SendToUser(trip.PassengerID, ws.Event{Type: ws.EventTripCompleted, Data: resp})
 	return &resp, nil
@@ -714,6 +842,12 @@ func (s *TripService) CancelTrip(ctx context.Context, callerUserID, tripID, reas
 	}
 
 	_ = s.tripLocations.RemoveOpenTrip(ctx, tripID, trip.VehicleType)
+
+	if trip.Status == models.TripMatched {
+		// Cancelled after a driver was confirmed: the fare goes back to the
+		// passenger's wallet.
+		s.escrow.Refund(ctx, tripID, "trip cancelled")
+	}
 
 	if trip.Status == models.TripRequested {
 		pendingDriverIDs, _ := s.offers.PendingDriverIDs(ctx, tripID)
@@ -888,7 +1022,21 @@ func (s *TripService) toTripResponse(ctx context.Context, trip *models.Trip) dto
 			info.Phone = trip.Driver.User.Phone
 			info.Email = trip.Driver.User.Email
 		}
+		// Only worth a Redis round-trip while the passenger would actually
+		// be tracking this driver on a map — "matched" (driving to
+		// pickup) and "picked_up" (driving to destination). A requested
+		// (no driver yet) or finished trip has nothing to track.
+		if trip.Status == models.TripMatched || trip.Status == models.TripPickedUp {
+			if loc, err := s.driverLocations.GetLocation(ctx, trip.Driver.ID, trip.Driver.VehicleType, s.locationStaleAfter); err == nil && loc != nil {
+				info.Latitude = &loc.Latitude
+				info.Longitude = &loc.Longitude
+			}
+		}
 		resp.DriverInfo = info
+	}
+
+	if trip.Status == models.TripMatched || trip.Status == models.TripPickedUp || trip.Status == models.TripCompleted {
+		resp.Escrow = s.escrow.Peek(ctx, trip.ID)
 	}
 
 	// Rated-flags only mean anything once the trip is completed — a

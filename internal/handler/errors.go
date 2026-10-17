@@ -6,6 +6,7 @@ package handler
 
 import (
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -57,6 +58,58 @@ var errorStatusMap = map[error]int{
 	service.ErrUserNotFound:         http.StatusNotFound,
 	service.ErrNotificationNotFound: http.StatusNotFound,
 	service.ErrInvalidVehicleType:   http.StatusBadRequest,
+
+	service.ErrVehicleTypeDisabled:         http.StatusBadRequest,
+	service.ErrMissingRequiredDocuments:    http.StatusBadRequest,
+	service.ErrDocumentTypeNotFound:        http.StatusNotFound,
+	service.ErrSubscriptionPlanUnavailable: http.StatusBadRequest,
+
+	service.ErrVehicleMakeNotFound:         http.StatusNotFound,
+	service.ErrVehicleModelNotFound:        http.StatusNotFound,
+	service.ErrVehicleModelMakeMismatch:    http.StatusBadRequest,
+	service.ErrVehicleCatalogEntryDisabled: http.StatusBadRequest,
+	service.ErrDuplicateVehicleMake:        http.StatusConflict,
+	service.ErrDuplicateVehicleModel:       http.StatusConflict,
+
+	service.ErrNoContactOnFile:          http.StatusBadRequest,
+	service.ErrOnlyDrivers:              http.StatusForbidden,
+	service.ErrInsufficientBalance:      http.StatusPaymentRequired,
+	service.ErrTopupAmountInvalid:       http.StatusBadRequest,
+	service.ErrTopupNotFound:            http.StatusNotFound,
+	service.ErrTooManyPendingTopups:     http.StatusTooManyRequests,
+	service.ErrPaymentProviderFailed:    http.StatusBadGateway,
+	service.ErrPINNotSet:                http.StatusConflict,
+	service.ErrPINIncorrect:             http.StatusForbidden, // never 401: the app treats 401 as an expired session
+	service.ErrPINLocked:                http.StatusTooManyRequests,
+	service.ErrPINWeak:                  http.StatusBadRequest,
+	service.ErrPayoutsDisabled:          http.StatusServiceUnavailable,
+	service.ErrPayoutAccountNotFound:    http.StatusNotFound,
+	service.ErrPayoutAccountNotApproved: http.StatusForbidden,
+	service.ErrPayoutAccountLimit:       http.StatusConflict,
+	service.ErrInvalidBank:              http.StatusBadRequest,
+	service.ErrBankResolveFailed:        http.StatusUnprocessableEntity,
+	service.ErrBankServiceUnavailable:   http.StatusServiceUnavailable,
+	service.ErrWithdrawalNotFound:       http.StatusNotFound,
+	service.ErrWithdrawalAmount:         http.StatusBadRequest,
+	service.ErrDailyLimitExceeded:       http.StatusUnprocessableEntity,
+	service.ErrCooldownLimit:            http.StatusUnprocessableEntity,
+	service.ErrWalletFrozen:             http.StatusForbidden,
+	service.ErrDuplicateWithdrawal:      http.StatusConflict,
+	service.ErrWithdrawalState:          http.StatusConflict,
+	service.ErrEscrowNotFound:           http.StatusNotFound,
+	service.ErrEscrowState:              http.StatusConflict,
+	service.ErrNotPayer:                 http.StatusForbidden,
+	service.ErrNoNextOfKin:              http.StatusNotFound,
+	service.ErrNextOfKinInvalid:         http.StatusBadRequest,
+	service.ErrAppealNotFound:           http.StatusNotFound,
+	service.ErrAppealState:              http.StatusConflict,
+	service.ErrAppealTokenInvalid:       http.StatusForbidden,
+	service.ErrSameApprover:             http.StatusForbidden,
+	service.ErrAppealInvalid:            http.StatusBadRequest,
+	service.ErrNothingToAppeal:          http.StatusConflict,
+	service.ErrShiftNotFound:            http.StatusNotFound,
+	service.ErrShiftClosed:              http.StatusConflict,
+	service.ErrInvalidPoint:             http.StatusBadRequest,
 }
 
 // handleServiceError writes the appropriate error response for an error
@@ -68,5 +121,12 @@ func handleServiceError(c *gin.Context, err error) {
 			return
 		}
 	}
+	// Unrecognized errors become a generic 500 to the client (never leak
+	// internals like "smtp authentication failed" to an API consumer),
+	// but the real cause still needs to be visible somewhere — otherwise
+	// a failure like a misconfigured mail server or a dropped DB
+	// connection is undiagnosable from the server's own logs. Gin's
+	// request logger only records the status code, not this error.
+	log.Printf("handler: unexpected error on %s %s: %v", c.Request.Method, c.Request.URL.Path, err)
 	utils.Fail(c, http.StatusInternalServerError, "something went wrong, please try again")
 }

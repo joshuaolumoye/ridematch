@@ -13,6 +13,7 @@ const (
 	NotificationTrip          NotificationType = "trip"           // trip lifecycle (matched, cancelled, etc.)
 	NotificationAccountStatus NotificationType = "account_status" // suspended/reactivated/banned
 	NotificationSystem        NotificationType = "system"         // general admin/broadcast message
+	NotificationWallet        NotificationType = "wallet"         // top-ups, trip payments, withdrawals
 )
 
 // Notification is an in-app message shown to one user (rider, driver, or

@@ -36,6 +36,24 @@ type DriverProfile struct {
 	PlateNumber     string      `gorm:"type:varchar(20);uniqueIndex" json:"plate_number"`
 	VehiclePhotoURL string      `gorm:"type:varchar(500)" json:"vehicle_photo_url,omitempty"`
 
+	// Make/model are optional references into the admin-curated
+	// VehicleMake/VehicleModel catalog, picked from a dropdown at
+	// registration. The *name* is snapshotted onto the profile at
+	// registration time (not just the ID) so a driver's displayed
+	// vehicle never silently changes or disappears if admin later
+	// renames or removes that catalog entry — the FK is kept for
+	// filtering/analytics, the name is the source of truth for display.
+	VehicleMakeID    *string `gorm:"type:char(36)" json:"vehicle_make_id,omitempty"`
+	VehicleModelID   *string `gorm:"type:char(36)" json:"vehicle_model_id,omitempty"`
+	VehicleMakeName  string  `gorm:"type:varchar(80)" json:"vehicle_make_name,omitempty"`
+	VehicleModelName string  `gorm:"type:varchar(80)" json:"vehicle_model_name,omitempty"`
+	VehicleYear      *int    `json:"vehicle_year,omitempty"`
+	// Snapshotted from the chosen model at registration — lets the
+	// passenger-side category filter (Economy/Comfort/SUV/Premium) work
+	// with one indexed column instead of a join on every nearby-driver
+	// query. Car vehicle type only; empty for okada/keke/bus.
+	VehicleCategory VehicleCategory `gorm:"type:varchar(20);index" json:"vehicle_category,omitempty"`
+
 	// IDDocumentURL points at a private object-storage key, never a public
 	// URL — it is only ever resolved to a short-lived signed URL for an
 	// admin performing verification. See internal/utils storage helpers.

@@ -59,3 +59,12 @@ func (o *OTPRequest) IsConsumed() bool {
 func (o *OTPRequest) AttemptsExceeded() bool {
 	return o.Attempts >= o.MaxAttempts
 }
+
+// Step-up purposes: short-lived codes authorising one sensitive action.
+// Kept ≤20 chars (otp_requests.purpose is varchar(20)).
+const (
+	OTPPurposePayoutAcct OTPPurpose = "payout_account"
+	OTPPurposeSetPIN     OTPPurpose = "set_pin"
+	OTPPurposeNOK        OTPPurpose = "next_of_kin"
+	OTPPurposeAppeal     OTPPurpose = "nok_appeal"
+)

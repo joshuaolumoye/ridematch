@@ -31,5 +31,5 @@ func (s *ConsoleSender) Send(_ context.Context, phone, message string) error {
 
 // BuildOTPMessage formats the standard OTP SMS body.
 func BuildOTPMessage(code string, ttlMinutes int) string {
-	return fmt.Sprintf("Your RideMatch verification code is %s. It expires in %d minutes. Do not share this code.", code, ttlMinutes)
+	return fmt.Sprintf("Your MakeWeRide verification code is %s. It expires in %d minutes. Do not share this code.", code, ttlMinutes)
 }

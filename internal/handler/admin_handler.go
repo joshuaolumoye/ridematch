@@ -17,12 +17,13 @@ import (
 // subscription activation. Every route here is mounted behind
 // middleware.RequireRole("admin") — see internal/router.
 type AdminHandler struct {
-	admin *service.AdminService
+	admin    *service.AdminService
+	settings *service.SettingsService
 }
 
 // NewAdminHandler constructs an AdminHandler.
-func NewAdminHandler(admin *service.AdminService) *AdminHandler {
-	return &AdminHandler{admin: admin}
+func NewAdminHandler(admin *service.AdminService, settings *service.SettingsService) *AdminHandler {
+	return &AdminHandler{admin: admin, settings: settings}
 }
 
 // VerifyDriver godoc
@@ -404,6 +405,394 @@ func (h *AdminHandler) UpdateSubscriptionPrice(c *gin.Context) {
 		return
 	}
 	utils.Success(c, http.StatusOK, "subscription price updated", resp)
+}
+
+// ListVehicleTypes godoc
+//
+//	@Summary		List every vehicle type and whether it's accepting new drivers
+//	@Tags			Admin
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	utils.APIResponse{data=[]dto.AdminVehicleTypeItem}
+//	@Failure		403	{object}	utils.APIResponse	"Caller is not an admin"
+//	@Router			/admin/settings/vehicle-types [get]
+func (h *AdminHandler) ListVehicleTypes(c *gin.Context) {
+	resp, err := h.settings.ListVehicleTypes(c.Request.Context())
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "vehicle types loaded", resp)
+}
+
+// UpdateVehicleType godoc
+//
+//	@Summary		Turn a vehicle type on or off for new driver registration
+//	@Description	Disabling a vehicle type hides it from registration and the passenger booking picker immediately; it does not affect drivers already registered under it.
+//	@Tags			Admin
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			vehicle_type	path		string									true	"car | okada | keke | bus"
+//	@Param			request			body		dto.AdminUpdateVehicleTypeRequest	true	"Enabled flag"
+//	@Success		200	{object}	utils.APIResponse{data=dto.AdminVehicleTypeItem}
+//	@Failure		400	{object}	utils.APIResponse	"Invalid vehicle type"
+//	@Failure		403	{object}	utils.APIResponse	"Caller is not an admin"
+//	@Router			/admin/settings/vehicle-types/{vehicle_type} [put]
+func (h *AdminHandler) UpdateVehicleType(c *gin.Context) {
+	var req dto.AdminUpdateVehicleTypeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Fail(c, http.StatusBadRequest, "enabled (bool) is required")
+		return
+	}
+
+	resp, err := h.settings.SetVehicleTypeEnabled(c.Request.Context(), c.Param("vehicle_type"), req.Enabled)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "vehicle type updated", resp)
+}
+
+// ListSubscriptionPlans godoc
+//
+//	@Summary		List every (vehicle type, billing cycle) payment plan
+//	@Tags			Admin
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			vehicle_type	query		string	false	"car | okada | keke | bus (every vehicle type if omitted)"
+//	@Success		200	{object}	utils.APIResponse{data=[]dto.AdminSubscriptionPlanItem}
+//	@Failure		403	{object}	utils.APIResponse	"Caller is not an admin"
+//	@Router			/admin/settings/subscription-plans [get]
+func (h *AdminHandler) ListSubscriptionPlans(c *gin.Context) {
+	resp, err := h.settings.ListSubscriptionPlans(c.Request.Context(), c.Query("vehicle_type"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "subscription plans loaded", resp)
+}
+
+// UpdateSubscriptionPlan godoc
+//
+//	@Summary		Turn one billing cycle on/off and set its price for a vehicle type
+//	@Description	Each vehicle type has its own daily/weekly/monthly/yearly plans, each independently enabled and priced. If only "yearly" is enabled for a vehicle type, that type's drivers see exactly one plan to pay for.
+//	@Tags			Admin
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			vehicle_type	path		string									true	"car | okada | keke | bus"
+//	@Param			billing_cycle	path		string									true	"daily | weekly | monthly | yearly"
+//	@Param			request			body		dto.AdminUpdateSubscriptionPlanRequest	true	"Enabled flag and price in kobo"
+//	@Success		200	{object}	utils.APIResponse{data=dto.AdminSubscriptionPlanItem}
+//	@Failure		400	{object}	utils.APIResponse	"Invalid vehicle type or billing cycle"
+//	@Failure		403	{object}	utils.APIResponse	"Caller is not an admin"
+//	@Router			/admin/settings/subscription-plans/{vehicle_type}/{billing_cycle} [put]
+func (h *AdminHandler) UpdateSubscriptionPlan(c *gin.Context) {
+	var req dto.AdminUpdateSubscriptionPlanRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Fail(c, http.StatusBadRequest, "enabled (bool) and price_kobo (>= 0) are required")
+		return
+	}
+
+	resp, err := h.settings.UpsertSubscriptionPlan(c.Request.Context(), c.Param("vehicle_type"), c.Param("billing_cycle"), req.Enabled, req.PriceKobo)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "subscription plan updated", resp)
+}
+
+// ListDocumentTypes godoc
+//
+//	@Summary		List the documents required/offered for a vehicle type
+//	@Tags			Admin
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			vehicle_type	query		string	false	"car | okada | keke | bus (every vehicle type if omitted)"
+//	@Success		200	{object}	utils.APIResponse{data=[]dto.AdminDocumentTypeItem}
+//	@Failure		403	{object}	utils.APIResponse	"Caller is not an admin"
+//	@Router			/admin/settings/document-types [get]
+func (h *AdminHandler) ListDocumentTypes(c *gin.Context) {
+	resp, err := h.settings.ListDocumentTypes(c.Request.Context(), c.Query("vehicle_type"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "document types loaded", resp)
+}
+
+// CreateDocumentType godoc
+//
+//	@Summary		Add a required/optional document to a vehicle type's registration list
+//	@Tags			Admin
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			request	body		dto.AdminCreateDocumentTypeRequest	true	"Document type"
+//	@Success		201		{object}	utils.APIResponse{data=dto.AdminDocumentTypeItem}
+//	@Failure		400		{object}	utils.APIResponse
+//	@Failure		403		{object}	utils.APIResponse	"Caller is not an admin"
+//	@Router			/admin/settings/document-types [post]
+func (h *AdminHandler) CreateDocumentType(c *gin.Context) {
+	var req dto.AdminCreateDocumentTypeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Fail(c, http.StatusBadRequest, "vehicle_type and name are required")
+		return
+	}
+
+	resp, err := h.settings.CreateDocumentType(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusCreated, "document type created", resp)
+}
+
+// UpdateDocumentType godoc
+//
+//	@Summary		Edit a document requirement (name, required/optional, enabled, order)
+//	@Tags			Admin
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string									true	"Document type ID"
+//	@Param			request	body		dto.AdminUpdateDocumentTypeRequest	true	"Updated fields"
+//	@Success		200		{object}	utils.APIResponse{data=dto.AdminDocumentTypeItem}
+//	@Failure		400		{object}	utils.APIResponse
+//	@Failure		403		{object}	utils.APIResponse	"Caller is not an admin"
+//	@Failure		404		{object}	utils.APIResponse
+//	@Router			/admin/settings/document-types/{id} [put]
+func (h *AdminHandler) UpdateDocumentType(c *gin.Context) {
+	var req dto.AdminUpdateDocumentTypeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Fail(c, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	resp, err := h.settings.UpdateDocumentType(c.Request.Context(), c.Param("id"), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "document type updated", resp)
+}
+
+// DeleteDocumentType godoc
+//
+//	@Summary		Remove a document requirement from a vehicle type
+//	@Tags			Admin
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Document type ID"
+//	@Success		200	{object}	utils.APIResponse
+//	@Failure		403	{object}	utils.APIResponse	"Caller is not an admin"
+//	@Failure		404	{object}	utils.APIResponse
+//	@Router			/admin/settings/document-types/{id} [delete]
+func (h *AdminHandler) DeleteDocumentType(c *gin.Context) {
+	if err := h.settings.DeleteDocumentType(c.Request.Context(), c.Param("id")); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "document type deleted", nil)
+}
+
+// --- Vehicle make/model catalog ---
+
+// ListVehicleMakes godoc
+//
+//	@Summary		List one vehicle type's full make/model catalog (admin view)
+//	@Tags			Admin
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			vehicle_type	query		string	true	"car | okada | keke | bus"
+//	@Success		200	{object}	utils.APIResponse{data=[]dto.AdminVehicleMakeItem}
+//	@Failure		400	{object}	utils.APIResponse
+//	@Failure		403	{object}	utils.APIResponse	"Caller is not an admin"
+//	@Router			/admin/vehicle-catalog/makes [get]
+func (h *AdminHandler) ListVehicleMakes(c *gin.Context) {
+	resp, err := h.settings.ListVehicleMakes(c.Request.Context(), c.Query("vehicle_type"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "vehicle makes loaded", resp)
+}
+
+// CreateVehicleMake godoc
+//
+//	@Summary		Add a vehicle manufacturer under a vehicle type
+//	@Tags			Admin
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			request	body		dto.AdminCreateMakeRequest	true	"Vehicle type and make name"
+//	@Success		201		{object}	utils.APIResponse{data=dto.AdminVehicleMakeItem}
+//	@Failure		400		{object}	utils.APIResponse
+//	@Failure		403		{object}	utils.APIResponse	"Caller is not an admin"
+//	@Failure		409		{object}	utils.APIResponse	"This make already exists for this vehicle type"
+//	@Router			/admin/vehicle-catalog/makes [post]
+func (h *AdminHandler) CreateVehicleMake(c *gin.Context) {
+	var req dto.AdminCreateMakeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Fail(c, http.StatusBadRequest, "vehicle_type and name are required")
+		return
+	}
+	resp, err := h.settings.CreateVehicleMake(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusCreated, "vehicle make created", resp)
+}
+
+// UpdateVehicleMake godoc
+//
+//	@Summary		Rename a make, or enable/disable it
+//	@Tags			Admin
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string							true	"Vehicle make ID"
+//	@Param			request	body		dto.AdminUpdateMakeRequest	true	"Updated fields"
+//	@Success		200		{object}	utils.APIResponse{data=dto.AdminVehicleMakeItem}
+//	@Failure		400		{object}	utils.APIResponse
+//	@Failure		403		{object}	utils.APIResponse	"Caller is not an admin"
+//	@Failure		404		{object}	utils.APIResponse
+//	@Router			/admin/vehicle-catalog/makes/{id} [put]
+func (h *AdminHandler) UpdateVehicleMake(c *gin.Context) {
+	var req dto.AdminUpdateMakeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Fail(c, http.StatusBadRequest, "name is required")
+		return
+	}
+	resp, err := h.settings.UpdateVehicleMake(c.Request.Context(), c.Param("id"), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "vehicle make updated", resp)
+}
+
+// DeleteVehicleMake godoc
+//
+//	@Summary		Remove a make and every model under it
+//	@Tags			Admin
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Vehicle make ID"
+//	@Success		200	{object}	utils.APIResponse
+//	@Failure		403	{object}	utils.APIResponse	"Caller is not an admin"
+//	@Failure		404	{object}	utils.APIResponse
+//	@Router			/admin/vehicle-catalog/makes/{id} [delete]
+func (h *AdminHandler) DeleteVehicleMake(c *gin.Context) {
+	if err := h.settings.DeleteVehicleMake(c.Request.Context(), c.Param("id")); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "vehicle make deleted", nil)
+}
+
+// CreateVehicleModel godoc
+//
+//	@Summary		Add a model/trim under an existing make
+//	@Tags			Admin
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			request	body		dto.AdminCreateModelRequest	true	"Make ID, model name, and (car only) category"
+//	@Success		201		{object}	utils.APIResponse{data=dto.AdminVehicleModelItem}
+//	@Failure		400		{object}	utils.APIResponse
+//	@Failure		403		{object}	utils.APIResponse	"Caller is not an admin"
+//	@Failure		404		{object}	utils.APIResponse	"Make not found"
+//	@Failure		409		{object}	utils.APIResponse	"This model already exists under this make"
+//	@Router			/admin/vehicle-catalog/models [post]
+func (h *AdminHandler) CreateVehicleModel(c *gin.Context) {
+	var req dto.AdminCreateModelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Fail(c, http.StatusBadRequest, "make_id and name are required")
+		return
+	}
+	resp, err := h.settings.CreateVehicleModel(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusCreated, "vehicle model created", resp)
+}
+
+// UpdateVehicleModel godoc
+//
+//	@Summary		Edit a model's name, category, or enabled flag
+//	@Tags			Admin
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string							true	"Vehicle model ID"
+//	@Param			request	body		dto.AdminUpdateModelRequest	true	"Updated fields"
+//	@Success		200		{object}	utils.APIResponse{data=dto.AdminVehicleModelItem}
+//	@Failure		400		{object}	utils.APIResponse
+//	@Failure		403		{object}	utils.APIResponse	"Caller is not an admin"
+//	@Failure		404		{object}	utils.APIResponse
+//	@Router			/admin/vehicle-catalog/models/{id} [put]
+func (h *AdminHandler) UpdateVehicleModel(c *gin.Context) {
+	var req dto.AdminUpdateModelRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Fail(c, http.StatusBadRequest, "name is required")
+		return
+	}
+	resp, err := h.settings.UpdateVehicleModel(c.Request.Context(), c.Param("id"), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "vehicle model updated", resp)
+}
+
+// DeleteVehicleModel godoc
+//
+//	@Summary		Remove a single model, leaving its make untouched
+//	@Tags			Admin
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Vehicle model ID"
+//	@Success		200	{object}	utils.APIResponse
+//	@Failure		403	{object}	utils.APIResponse	"Caller is not an admin"
+//	@Failure		404	{object}	utils.APIResponse
+//	@Router			/admin/vehicle-catalog/models/{id} [delete]
+func (h *AdminHandler) DeleteVehicleModel(c *gin.Context) {
+	if err := h.settings.DeleteVehicleModel(c.Request.Context(), c.Param("id")); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "vehicle model deleted", nil)
+}
+
+// BulkImportVehicleCatalog godoc
+//
+//	@Summary		Create many make+model rows at once (the "paste a sheet" importer)
+//	@Description	Idempotent — a row whose make+model already exists (case-insensitive) is silently skipped, not duplicated or errored, so the same sheet can be re-pasted safely as it grows.
+//	@Tags			Admin
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			request	body		dto.AdminBulkCatalogRequest	true	"Vehicle type and rows"
+//	@Success		200		{object}	utils.APIResponse{data=dto.AdminBulkCatalogResult}
+//	@Failure		400		{object}	utils.APIResponse
+//	@Failure		403		{object}	utils.APIResponse	"Caller is not an admin"
+//	@Router			/admin/vehicle-catalog/bulk [post]
+func (h *AdminHandler) BulkImportVehicleCatalog(c *gin.Context) {
+	var req dto.AdminBulkCatalogRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.Fail(c, http.StatusBadRequest, "vehicle_type and at least one row (make, model) are required")
+		return
+	}
+	resp, err := h.settings.BulkImportVehicleCatalog(c.Request.Context(), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "vehicle catalog imported", resp)
 }
 
 // GetTrip godoc

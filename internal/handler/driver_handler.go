@@ -26,7 +26,7 @@ func NewDriverHandler(drivers *service.DriverService) *DriverHandler {
 // Register godoc
 //
 //	@Summary		Register as a driver
-//	@Description	Creates a driver profile (vehicle type, plate number, ID document) for the authenticated account and promotes it to the "driver" role. A vehicle photo and ID document must already be hosted somewhere reachable by URL. The profile starts in "pending" verification status — see the admin verification endpoint.
+//	@Description	Creates a driver profile (vehicle type, plate number, documents) for the authenticated account and promotes it to the "driver" role. Which vehicle types are available, and which documents each one requires, is admin-configured — see GET /meta/vehicle-types and GET /meta/document-types. Every document URL must already be uploaded (POST /uploads) and referenced here by URL. The profile starts in "pending" verification status — see the admin verification endpoint.
 //	@Tags			Driver
 //	@Accept			json
 //	@Produce		json
@@ -39,7 +39,7 @@ func NewDriverHandler(drivers *service.DriverService) *DriverHandler {
 func (h *DriverHandler) Register(c *gin.Context) {
 	var req dto.RegisterDriverRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Fail(c, http.StatusBadRequest, "vehicle_type, plate_number, and id_document_url are required")
+		utils.Fail(c, http.StatusBadRequest, "vehicle_type and plate_number are required")
 		return
 	}
 

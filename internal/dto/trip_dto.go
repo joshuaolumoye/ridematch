@@ -49,6 +49,10 @@ type TripResponse struct {
 	// false otherwise, since neither side can rate before then).
 	PassengerRated bool `json:"passenger_rated"`
 	DriverRated    bool `json:"driver_rated"`
+
+	// Escrow is the state of the payment held for this trip (set once a
+	// driver is matched, when escrow is enabled).
+	Escrow *EscrowResponse `json:"escrow,omitempty"`
 }
 
 // TripPartyInfo is the minimal identifying info shared between a matched
@@ -64,6 +68,46 @@ type TripPartyInfo struct {
 	VehicleType string  `json:"vehicle_type,omitempty"`
 	PlateNumber string  `json:"plate_number,omitempty"`
 	Rating      float64 `json:"rating,omitempty"`
+	// Latitude/Longitude are the driver's current live position —
+	// populated on DriverInfo only, and only while the trip is "matched"
+	// or "picked_up" (so the passenger's map can track them to the
+	// pickup point and then to the destination). Omitted whenever no
+	// fresh position is on record (driver's app briefly backgrounded,
+	// location permission revoked, etc) — the app falls back to the last
+	// position it already has rather than treating this as an error.
+	Latitude  *float64 `json:"latitude,omitempty"`
+	Longitude *float64 `json:"longitude,omitempty"`
+}
+
+// ShareLocationResponse is returned by POST /trips/:id/share-location —
+// a public, no-login-required link either party (passenger or matched
+// driver) can hand to anyone else (over WhatsApp, SMS, email, or any
+// other way) so that person can watch the trip's live position on a map,
+// without ever getting access to the app itself or either party's phone
+// number/email.
+type ShareLocationResponse struct {
+	URL       string `json:"url"`
+	ExpiresAt string `json:"expires_at"`
+}
+
+// PublicTrackingResponse is the deliberately-trimmed, no-auth view of a
+// trip served from a share link — enough for a friend/family member to
+// watch the trip progress on a map, and nothing that would let them
+// contact either party directly or learn more than that.
+type PublicTrackingResponse struct {
+	Status             string   `json:"status"`
+	VehicleType        string   `json:"vehicle_type"`
+	PickupLat          float64  `json:"pickup_lat"`
+	PickupLng          float64  `json:"pickup_lng"`
+	PickupAddress      string   `json:"pickup_address,omitempty"`
+	DestinationLat     float64  `json:"destination_lat"`
+	DestinationLng     float64  `json:"destination_lng"`
+	DestinationAddress string   `json:"destination_address,omitempty"`
+	DriverName         string   `json:"driver_name,omitempty"`
+	PlateNumber        string   `json:"plate_number,omitempty"`
+	Latitude           *float64 `json:"latitude,omitempty"`
+	Longitude          *float64 `json:"longitude,omitempty"`
+	ExpiresAt          string   `json:"expires_at"`
 }
 
 // MakeOfferRequest is the payload for POST /trips/:id/offers.

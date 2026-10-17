@@ -27,15 +27,16 @@ const defaultDashboardSeriesDays = 14
 // call the exact same method an admin's manual override uses today —
 // one code path, two callers.
 type AdminService struct {
-	drivers       repository.DriverRepository
-	users         repository.UserRepository
-	trips         repository.TripRepository
-	locations     repository.LocationRepository
-	prices        repository.SubscriptionPriceRepository
-	fileStore     storage.Store
-	smsSender     sms.Sender
-	email         email.Sender
-	notifications *NotificationService
+	drivers         repository.DriverRepository
+	users           repository.UserRepository
+	trips           repository.TripRepository
+	locations       repository.LocationRepository
+	prices          repository.SubscriptionPriceRepository
+	driverDocuments repository.DriverDocumentRepository
+	fileStore       storage.Store
+	smsSender       sms.Sender
+	email           email.Sender
+	notifications   *NotificationService
 
 	locationStaleAfter time.Duration
 }
@@ -47,6 +48,7 @@ func NewAdminService(
 	trips repository.TripRepository,
 	locations repository.LocationRepository,
 	prices repository.SubscriptionPriceRepository,
+	driverDocuments repository.DriverDocumentRepository,
 	fileStore storage.Store,
 	smsSender sms.Sender,
 	emailSender email.Sender,
@@ -59,6 +61,7 @@ func NewAdminService(
 		trips:              trips,
 		locations:          locations,
 		prices:             prices,
+		driverDocuments:    driverDocuments,
 		fileStore:          fileStore,
 		smsSender:          smsSender,
 		email:              emailSender,
@@ -266,16 +269,52 @@ func (s *AdminService) GetDriver(ctx context.Context, driverID string) (*dto.Adm
 		return nil, fmt.Errorf("service: failed to sum driver earnings: %w", err)
 	}
 
+	documents, err := s.driverDocumentItems(ctx, profile.ID)
+	if err != nil {
+		return nil, err
+	}
+
 	item := s.toDriverListItem(ctx, profile)
 	return &dto.AdminDriverDetailResponse{
 		AdminDriverListItem: item,
 		VehiclePhotoURL:     signURL(ctx, s.fileStore, profile.VehiclePhotoURL),
-		IDDocumentURL:       signURL(ctx, s.fileStore, profile.IDDocumentURL),
 		VerificationNote:    profile.VerificationNote,
+		Documents:           documents,
 		TotalTrips:          totalTrips,
 		CompletedTrips:      totalTrips, // SumEarningsByDriver only counts completed trips
 		TotalEarningsKobo:   totalKobo,
 	}, nil
+}
+
+// driverDocumentItems loads every document a driver submitted, with a
+// signed URL and its document type's name/required flag, for the rider
+// detail page's document review list.
+func (s *AdminService) driverDocumentItems(ctx context.Context, driverID string) ([]dto.AdminDriverDocumentItem, error) {
+	if s.driverDocuments == nil {
+		return []dto.AdminDriverDocumentItem{}, nil
+	}
+	docs, err := s.driverDocuments.FindByDriverID(ctx, driverID)
+	if err != nil {
+		return nil, fmt.Errorf("service: failed to load driver documents: %w", err)
+	}
+
+	items := make([]dto.AdminDriverDocumentItem, 0, len(docs))
+	for _, d := range docs {
+		name := ""
+		required := false
+		if d.DocumentType != nil {
+			name = d.DocumentType.Name
+			required = d.DocumentType.Required
+		}
+		items = append(items, dto.AdminDriverDocumentItem{
+			DocumentTypeID: d.DocumentTypeID,
+			DocumentName:   name,
+			Required:       required,
+			FileURL:        signURL(ctx, s.fileStore, d.FileURL),
+			Status:         string(d.Status),
+		})
+	}
+	return items, nil
 }
 
 func (s *AdminService) toDriverListItem(ctx context.Context, p *models.DriverProfile) dto.AdminDriverListItem {
@@ -321,7 +360,7 @@ func (s *AdminService) NotifyDriver(ctx context.Context, driverID string, req dt
 	resp := &dto.AdminNotifyDriverResponse{}
 	subject := req.Subject
 	if subject == "" {
-		subject = "RideMatch: action needed on your driver documents"
+		subject = "MakeWeRide: action needed on your driver documents"
 	}
 
 	if profile.User.Phone != "" {
@@ -481,7 +520,7 @@ func (s *AdminService) UpdateAccountStatus(ctx context.Context, userID string, r
 func accountStatusNotification(status models.UserStatus, reason string) (title, body string) {
 	switch status {
 	case models.StatusActive:
-		return "Your account is active again", "Welcome back — you have full access to RideMatch again."
+		return "Your account is active again", "Welcome back — you have full access to MakeWeRide again."
 	case models.StatusBanned:
 		body = "Your account has been permanently banned."
 	default: // suspended

@@ -32,9 +32,9 @@ func (s *ConsoleSender) Send(_ context.Context, to, subject, body string) error 
 
 // BuildOTPEmail formats the standard OTP email subject and body.
 func BuildOTPEmail(code string, ttlMinutes int) (subject, body string) {
-	subject = "Your RideMatch verification code"
+	subject = "Your MakeWeRide verification code"
 	body = fmt.Sprintf(
-		"Your RideMatch verification code is %s.\n\nIt expires in %d minutes. Do not share this code with anyone — RideMatch staff will never ask you for it.",
+		"Your MakeWeRide verification code is %s.\n\nIt expires in %d minutes. Do not share this code with anyone — MakeWeRide staff will never ask you for it.",
 		code, ttlMinutes,
 	)
 	return subject, body

@@ -72,6 +72,27 @@ func (h *TripHandler) Get(c *gin.Context) {
 	utils.Success(c, http.StatusOK, "trip fetched", resp)
 }
 
+// ShareLocation godoc
+//
+//	@Summary		Create a public live-location sharing link for this trip
+//	@Description	Either the passenger or the matched driver can call this to get a no-login link — share it over WhatsApp, SMS, email, or anywhere else — that lets anyone holding it watch this trip's live position on a map for a few hours. The link reveals no phone number or email.
+//	@Tags			Trips
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Trip ID"
+//	@Success		200	{object}	utils.APIResponse{data=dto.ShareLocationResponse}
+//	@Failure		403	{object}	utils.APIResponse
+//	@Failure		404	{object}	utils.APIResponse
+//	@Router			/trips/{id}/share-location [post]
+func (h *TripHandler) ShareLocation(c *gin.Context) {
+	resp, err := h.trips.CreateShareLink(c.Request.Context(), middleware.UserIDFromContext(c), c.Param("id"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	utils.Success(c, http.StatusOK, "share link created", resp)
+}
+
 // MyActive godoc
 //
 //	@Summary		Get my current active trip

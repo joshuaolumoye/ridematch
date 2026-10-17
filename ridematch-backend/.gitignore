@@ -1,0 +1,19 @@
+# Environment
+.env
+.env.local
+
+# Build artifacts
+/bin/
+/tmp/
+*.exe
+*.test
+
+# Locally-stored uploads (STORAGE_DRIVER=local) — driver documents/photos
+/uploads/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store

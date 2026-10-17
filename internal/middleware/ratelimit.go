@@ -60,3 +60,34 @@ func RateLimit(client *redis.Client, action string, limit int, window time.Durat
 		c.Next()
 	}
 }
+
+// RateLimitByIP is RateLimit for unauthenticated routes, keyed by client IP.
+// Unlike RateLimit it fails CLOSED if Redis is unreachable: these routes
+// (e.g. next-of-kin appeals) trigger SMS and sensitive lookups, so losing
+// the limiter must not mean losing protection.
+func RateLimitByIP(client *redis.Client, action string, limit int, window time.Duration) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		key := fmt.Sprintf("ratelimit:ip:%s:%s", action, c.ClientIP())
+
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 500*time.Millisecond)
+		defer cancel()
+
+		count, err := client.Incr(ctx, key).Result()
+		if err != nil {
+			utils.Fail(c, http.StatusServiceUnavailable, "service temporarily unavailable, please try again shortly")
+			c.Abort()
+			return
+		}
+		if count == 1 {
+			client.Expire(ctx, key, window)
+		}
+		if count > int64(limit) {
+			ttl, _ := client.TTL(ctx, key).Result()
+			c.Header("Retry-After", fmt.Sprintf("%.0f", ttl.Seconds()))
+			utils.Fail(c, http.StatusTooManyRequests, "too many requests, please try again later")
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}

@@ -1,8 +1,8 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "RideMatch API",
-    "description": "Backend API for RideMatch — a multi-modal (car, okada, keke, bus) ride/logistics matching platform for Nigeria. Authentication is phone number + OTP based; there is no password field. All responses use a single envelope shape: `{ success, message, data, error }`.",
+    "title": "MakeWeRide API",
+    "description": "Backend API for MakeWeRide — a multi-modal (car, okada, keke, bus) ride/logistics matching platform for Nigeria. Authentication is phone number + OTP based; there is no password field. All responses use a single envelope shape: `{ success, message, data, error }`.",
     "version": "1.0.0",
     "contact": {
       "name": "Joshua Olumoye"

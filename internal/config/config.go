@@ -127,6 +127,37 @@ type Config struct {
 	// it. Defaults to true since every non-AWS provider this app targets
 	// needs it.
 	S3ForcePathStyle bool
+
+	// ---- Money: wallets, escrow, payouts ----
+
+	// WalletTopupFeeBps is the gross-up rate (basis points) charged on a
+	// wallet top-up to cover Flutterwave's collection fee (default 215 =
+	// 2.15%: 2% local collection fee plus VAT, rounded up). The payer is
+	// shown the grossed-up total so the wallet is credited the amount they
+	// asked for.
+	WalletTopupFeeBps    int
+	WalletTopupMinKobo   int64
+	WalletTopupMaxKobo   int64
+	WalletTopupTTL       time.Duration // how long a one-time account number stays valid
+	EscrowRequired       bool          // if true, accepting an offer requires funds in escrow
+	EscrowAutoRelease    time.Duration // release to driver this long after completion unless disputed
+	PayoutsEnabled       bool          // global kill-switch for withdrawals
+	PayoutMinKobo        int64
+	PayoutDailyLimitKobo int64
+	PayoutCooldown       time.Duration // restricted window after a new payout account / PIN change
+	PayoutCooldownCap    int64         // max single withdrawal during the cooldown window
+	PayoutReviewKobo     int64         // withdrawals at or above this need admin approval
+	PINMaxAttempts       int
+	PINLockDuration      time.Duration
+
+	// TrackingHMACSecret keys the hash chain over each driver's GPS trail,
+	// making after-the-fact tampering detectable. Falls back to the JWT
+	// access secret when unset (derive a distinct key from it).
+	TrackingHMACSecret string
+	TrackingRetention  time.Duration
+	ShiftStaleAfter    time.Duration // close a shift with no points for this long
+	AppealCoolingOff   time.Duration // wait between final approval and disbursement
+	AppealTokenTTL     time.Duration
 }
 
 // Load reads configuration from environment variables. It first attempts to
@@ -176,7 +207,7 @@ func Load() *Config {
 
 		SMSProvider:    getEnv("SMS_PROVIDER", "console"),
 		TermiiAPIKey:   getEnv("TERMII_API_KEY", ""),
-		TermiiSenderID: getEnv("TERMII_SENDER_ID", "RideMatch"),
+		TermiiSenderID: getEnv("TERMII_SENDER_ID", "MakeWeRide"),
 
 		EmailProvider:   getEnv("EMAIL_PROVIDER", "console"),
 		SMTPHost:        getEnv("SMTP_HOST", ""),
@@ -184,7 +215,7 @@ func Load() *Config {
 		SMTPUsername:    getEnv("SMTP_USERNAME", ""),
 		SMTPPassword:    getEnv("SMTP_PASSWORD", ""),
 		SMTPFromAddress: getEnv("SMTP_FROM_ADDRESS", ""),
-		SMTPFromName:    getEnv("SMTP_FROM_NAME", "RideMatch"),
+		SMTPFromName:    getEnv("SMTP_FROM_NAME", "MakeWeRide"),
 
 		PushProvider:        getEnv("PUSH_PROVIDER", "console"),
 		ExpoPushAccessToken: getEnv("EXPO_PUSH_ACCESS_TOKEN", ""),
@@ -203,6 +234,30 @@ func Load() *Config {
 		S3Bucket:         getEnv("S3_BUCKET", ""),
 		S3PublicBaseURL:  getEnv("S3_PUBLIC_BASE_URL", ""),
 		S3ForcePathStyle: getEnvBool("S3_FORCE_PATH_STYLE", true),
+
+		WalletTopupFeeBps:    getEnvInt("WALLET_TOPUP_FEE_BPS", 215),
+		WalletTopupMinKobo:   int64(getEnvInt("WALLET_TOPUP_MIN_KOBO", 100000)),   // NGN 1,000
+		WalletTopupMaxKobo:   int64(getEnvInt("WALLET_TOPUP_MAX_KOBO", 50000000)), // NGN 500,000
+		WalletTopupTTL:       getEnvDuration("WALLET_TOPUP_TTL", time.Hour),
+		EscrowRequired:       getEnvBool("ESCROW_REQUIRED", true),
+		EscrowAutoRelease:    getEnvDuration("ESCROW_AUTO_RELEASE", 30*time.Minute),
+		PayoutsEnabled:       getEnvBool("PAYOUTS_ENABLED", true),
+		PayoutMinKobo:        int64(getEnvInt("PAYOUT_MIN_KOBO", 100000)),           // NGN 1,000
+		PayoutDailyLimitKobo: int64(getEnvInt("PAYOUT_DAILY_LIMIT_KOBO", 20000000)), // NGN 200,000
+		PayoutCooldown:       getEnvDuration("PAYOUT_COOLDOWN", 24*time.Hour),
+		PayoutCooldownCap:    int64(getEnvInt("PAYOUT_COOLDOWN_CAP_KOBO", 2000000)), // NGN 20,000
+		PayoutReviewKobo:     int64(getEnvInt("PAYOUT_REVIEW_KOBO", 10000000)),      // NGN 100,000
+		PINMaxAttempts:       getEnvInt("PIN_MAX_ATTEMPTS", 5),
+		PINLockDuration:      getEnvDuration("PIN_LOCK_DURATION", 30*time.Minute),
+
+		TrackingHMACSecret: getEnv("TRACKING_HMAC_SECRET", ""),
+		TrackingRetention:  getEnvDuration("TRACKING_RETENTION", 365*24*time.Hour),
+		ShiftStaleAfter:    getEnvDuration("SHIFT_STALE_AFTER", 15*time.Minute),
+		AppealCoolingOff:   getEnvDuration("APPEAL_COOLING_OFF", 7*24*time.Hour),
+		AppealTokenTTL:     getEnvDuration("APPEAL_TOKEN_TTL", 14*24*time.Hour),
+	}
+	if cfg.TrackingHMACSecret == "" {
+		cfg.TrackingHMACSecret = "tracking:" + cfg.JWTAccessSecret
 	}
 
 	return cfg

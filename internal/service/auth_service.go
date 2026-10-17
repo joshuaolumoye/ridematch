@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -107,6 +108,16 @@ func (s *AuthService) RequestOTP(ctx context.Context, rawIdentifier string) (*dt
 	}
 
 	if err := s.dispatchOTP(ctx, identifier, channel, code); err != nil {
+		// The code was never actually delivered, so undo the row we just
+		// created — otherwise it sits there as the "latest" OTP and blocks
+		// the resend cooldown for a full cooldown window, leaving the user
+		// stuck even after whatever broke dispatch (e.g. SMTP connectivity)
+		// is fixed. Best-effort: if this also fails, log it but still
+		// surface the original dispatch error, which is the one that
+		// actually explains what went wrong.
+		if delErr := s.otps.Delete(ctx, otp.ID); delErr != nil {
+			log.Printf("auth: failed to roll back undelivered otp %s after dispatch failure: %v", otp.ID, delErr)
+		}
 		return nil, err
 	}
 

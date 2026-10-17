@@ -75,12 +75,26 @@ type AdminDriverListResponse struct {
 // documents (signed, admin-only), and their trip/earnings summary.
 type AdminDriverDetailResponse struct {
 	AdminDriverListItem
-	VehiclePhotoURL   string `json:"vehicle_photo_url,omitempty"`
-	IDDocumentURL     string `json:"id_document_url,omitempty"`
-	VerificationNote  string `json:"verification_note,omitempty"`
-	TotalTrips        int64  `json:"total_trips"`
-	CompletedTrips    int64  `json:"completed_trips"`
-	TotalEarningsKobo int64  `json:"total_earnings_kobo"`
+	VehiclePhotoURL  string `json:"vehicle_photo_url,omitempty"`
+	VerificationNote string `json:"verification_note,omitempty"`
+	// Documents is every file the driver submitted against this vehicle
+	// type's admin-defined document list, each with a signed, short-lived
+	// URL — replaces the old single id_document_url now that a vehicle
+	// type can require any number of documents.
+	Documents         []AdminDriverDocumentItem `json:"documents"`
+	TotalTrips        int64                     `json:"total_trips"`
+	CompletedTrips    int64                     `json:"completed_trips"`
+	TotalEarningsKobo int64                     `json:"total_earnings_kobo"`
+}
+
+// AdminDriverDocumentItem is one document a driver submitted, for the
+// rider detail page's document review list.
+type AdminDriverDocumentItem struct {
+	DocumentTypeID string `json:"document_type_id"`
+	DocumentName   string `json:"document_name"`
+	Required       bool   `json:"required"`
+	FileURL        string `json:"file_url"`
+	Status         string `json:"status"`
 }
 
 // AdminUserListItem is one row of the all-users list.
@@ -182,4 +196,19 @@ type AdminSubscriptionPriceItem struct {
 // PUT /admin/settings/subscription-prices/:vehicle_type.
 type AdminUpdateSubscriptionPriceRequest struct {
 	PriceKoboPerDay int64 `json:"price_kobo_per_day" binding:"required,min=0" example:"100000"`
+}
+
+// Page is the generic paged list envelope used by the money, tracking and
+// appeal admin endpoints.
+type Page[T any] struct {
+	Items      []T        `json:"items"`
+	Pagination Pagination `json:"pagination"`
+}
+
+// NewPage builds a Page, never serialising a nil items slice.
+func NewPage[T any](items []T, page, pageSize int, total int64) Page[T] {
+	if items == nil {
+		items = []T{}
+	}
+	return Page[T]{Items: items, Pagination: NewPagination(page, pageSize, total)}
 }

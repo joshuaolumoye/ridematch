@@ -33,63 +33,42 @@ import (
 type PaymentService struct {
 	payments repository.PaymentRepository
 	drivers  repository.DriverRepository
-	prices   repository.SubscriptionPriceRepository
+	settings *SettingsService
 	admin    *AdminService
 	gateway  flutterwave.Gateway
 
-	// fallbackDailyFeeKobo is used only if a vehicle type somehow has no
-	// SubscriptionPrice row (cmd/migrate seeds all four, so this is a
-	// safety net for an un-migrated/edge-case environment, not the
-	// normal path — the normal path always reads the admin-configured,
-	// per-vehicle-type price).
-	fallbackDailyFeeKobo int64
-	webhookSecret        string
-	defaultRedirectURL   string
+	webhookSecret      string
+	defaultRedirectURL string
 }
 
 // NewPaymentService constructs a PaymentService.
 func NewPaymentService(
 	payments repository.PaymentRepository,
 	drivers repository.DriverRepository,
-	prices repository.SubscriptionPriceRepository,
+	settings *SettingsService,
 	admin *AdminService,
 	gateway flutterwave.Gateway,
-	fallbackDailyFeeKobo int64,
 	webhookSecret string,
 	defaultRedirectURL string,
 ) *PaymentService {
 	return &PaymentService{
-		payments:             payments,
-		drivers:              drivers,
-		prices:               prices,
-		admin:                admin,
-		gateway:              gateway,
-		fallbackDailyFeeKobo: fallbackDailyFeeKobo,
-		webhookSecret:        webhookSecret,
-		defaultRedirectURL:   defaultRedirectURL,
+		payments:           payments,
+		drivers:            drivers,
+		settings:           settings,
+		admin:              admin,
+		gateway:            gateway,
+		webhookSecret:      webhookSecret,
+		defaultRedirectURL: defaultRedirectURL,
 	}
 }
 
-// dailyFeeFor returns the admin-configured daily platform-access price
-// for a vehicle type — okada, keke, car, and bus each have their own,
-// set from the admin dashboard — falling back to the configured flat fee
-// if that vehicle type has no price row yet.
-func (s *PaymentService) dailyFeeFor(ctx context.Context, vehicleType models.VehicleType) int64 {
-	if s.prices == nil {
-		return s.fallbackDailyFeeKobo
-	}
-	price, err := s.prices.FindByVehicleType(ctx, vehicleType)
-	if err != nil || price == nil {
-		return s.fallbackDailyFeeKobo
-	}
-	return price.PriceKoboPerDay
-}
-
-// GetSubscriptionPrice returns the current daily platform-access price
-// for the calling driver's own vehicle type, so the app can show it (and
-// the multiplied total for 1/3/7/30 days) before the driver ever starts
-// checkout.
-func (s *PaymentService) GetSubscriptionPrice(ctx context.Context, driverUserID string) (*dto.DriverSubscriptionPriceResponse, error) {
+// ListPlans returns every billing cycle currently enabled for the
+// calling driver's own vehicle type (daily/weekly/monthly/yearly — each
+// independently admin-toggled, with its own price). If an admin has only
+// turned on "yearly" for this driver's vehicle type, this returns
+// exactly one plan — the app renders exactly what comes back, nothing
+// hardcoded client-side.
+func (s *PaymentService) ListPlans(ctx context.Context, driverUserID string) (*dto.DriverSubscriptionPlansResponse, error) {
 	profile, err := s.drivers.FindByUserID(ctx, driverUserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -98,15 +77,22 @@ func (s *PaymentService) GetSubscriptionPrice(ctx context.Context, driverUserID 
 		return nil, fmt.Errorf("service: failed to load driver profile: %w", err)
 	}
 
-	return &dto.DriverSubscriptionPriceResponse{
-		VehicleType:     string(profile.VehicleType),
-		PriceKoboPerDay: s.dailyFeeFor(ctx, profile.VehicleType),
+	plans, err := s.settings.EnabledSubscriptionPlans(ctx, profile.VehicleType)
+	if err != nil {
+		return nil, err
+	}
+
+	return &dto.DriverSubscriptionPlansResponse{
+		VehicleType: string(profile.VehicleType),
+		Plans:       plans,
 	}, nil
 }
 
 // InitiateSubscriptionCheckout creates a Flutterwave hosted-checkout link
-// for a driver to pay for N days of platform access. Nothing is granted
-// yet — access is only activated once the webhook confirms payment.
+// for a driver to pay for one billing cycle of platform access. Nothing
+// is granted yet — access is only activated once the webhook confirms
+// payment. Rejects a cycle that isn't currently enabled (or has no
+// price set) for the driver's own vehicle type.
 func (s *PaymentService) InitiateSubscriptionCheckout(ctx context.Context, driverUserID string, req dto.InitiateSubscriptionRequest) (*dto.InitiateSubscriptionResponse, error) {
 	profile, err := s.drivers.FindByUserID(ctx, driverUserID)
 	if err != nil {
@@ -116,11 +102,14 @@ func (s *PaymentService) InitiateSubscriptionCheckout(ctx context.Context, drive
 		return nil, fmt.Errorf("service: failed to load driver profile: %w", err)
 	}
 
-	days := req.Days
-	if days <= 0 {
-		days = 1
+	cycle := models.BillingCycle(req.BillingCycle)
+	plan, err := s.settings.EnabledPlanFor(ctx, profile.VehicleType, cycle)
+	if err != nil {
+		return nil, err
 	}
-	amountKobo := s.dailyFeeFor(ctx, profile.VehicleType) * int64(days)
+
+	days := cycle.Days()
+	amountKobo := plan.PriceKobo
 
 	redirectURL := req.RedirectURL
 	if redirectURL == "" {
@@ -155,12 +144,13 @@ func (s *PaymentService) InitiateSubscriptionCheckout(ctx context.Context, drive
 			Name:        profile.User.Name,
 		},
 		Customizations: &flutterwave.Customizations{
-			Title:       "RideMatch Driver Access",
-			Description: fmt.Sprintf("%d day(s) of platform access", days),
+			Title:       "MakeWeRide Driver Access",
+			Description: fmt.Sprintf("%s plan — %d day(s) of platform access", cycle, days),
 		},
 		Meta: map[string]string{
-			"driver_id": profile.ID,
-			"purpose":   string(models.PurposeDriverSubscription),
+			"driver_id":     profile.ID,
+			"purpose":       string(models.PurposeDriverSubscription),
+			"billing_cycle": string(cycle),
 		},
 	})
 	if err != nil {
@@ -181,11 +171,20 @@ func (s *PaymentService) InitiateSubscriptionCheckout(ctx context.Context, drive
 	}
 
 	return &dto.InitiateSubscriptionResponse{
-		PaymentLink: paymentLink,
-		TxRef:       txRef,
-		AmountKobo:  amountKobo,
-		Days:        days,
+		PaymentLink:  paymentLink,
+		TxRef:        txRef,
+		AmountKobo:   amountKobo,
+		BillingCycle: string(cycle),
+		Days:         days,
 	}, nil
+}
+
+// VerifySignature checks the webhook's shared-secret header in constant time.
+func (s *PaymentService) VerifySignature(signatureHeader string) error {
+	if s.webhookSecret == "" || subtle.ConstantTimeCompare([]byte(signatureHeader), []byte(s.webhookSecret)) != 1 {
+		return ErrInvalidWebhookSignature
+	}
+	return nil
 }
 
 // HandleWebhook processes a Flutterwave webhook call. See the package-level

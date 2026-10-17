@@ -60,6 +60,26 @@ func main() {
 		&models.PaymentTransaction{},
 		&models.SubscriptionPrice{},
 		&models.Notification{},
+		&models.VehicleTypeConfig{},
+		&models.SubscriptionPlan{},
+		&models.DocumentType{},
+		&models.DriverDocument{},
+		&models.VehicleMake{},
+		&models.VehicleModel{},
+		&models.DriverShift{},
+		&models.LocationPoint{},
+		&models.Wallet{},
+		&models.LedgerTransaction{},
+		&models.LedgerEntry{},
+		&models.WalletTopup{},
+		&models.EscrowHold{},
+		&models.PayoutAccount{},
+		&models.Withdrawal{},
+		&models.NextOfKin{},
+		&models.WithdrawalAppeal{},
+		&models.AppealDocument{},
+		&models.AuditLog{},
+		&models.PlatformSetting{},
 	)
 	if err != nil {
 		log.Fatalf("migrate: auto-migration failed: %v", err)
@@ -68,8 +88,71 @@ func main() {
 	if err := seedDefaultSubscriptionPrices(db, cfg.DriverSubDailyFee); err != nil {
 		log.Fatalf("migrate: failed to seed default subscription prices: %v", err)
 	}
+	if err := seedDefaultVehicleTypeConfigs(db); err != nil {
+		log.Fatalf("migrate: failed to seed default vehicle type configs: %v", err)
+	}
+	if err := seedDefaultSubscriptionPlans(db, cfg.DriverSubDailyFee); err != nil {
+		log.Fatalf("migrate: failed to seed default subscription plans: %v", err)
+	}
 
 	log.Println("migrate: all tables are up to date")
+}
+
+// seedDefaultVehicleTypeConfigs turns every vehicle type on by default —
+// an admin explicitly disables one from the dashboard if they want to
+// stop accepting new drivers of that type. Never overwrites a config an
+// admin has already set.
+func seedDefaultVehicleTypeConfigs(db *gorm.DB) error {
+	vehicleTypes := []models.VehicleType{models.VehicleCar, models.VehicleOkada, models.VehicleKeke, models.VehicleBus}
+	for _, vt := range vehicleTypes {
+		var count int64
+		if err := db.Model(&models.VehicleTypeConfig{}).Where("vehicle_type = ?", vt).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			continue
+		}
+		log.Printf("migrate: seeding default vehicle type config for %s (enabled)...", vt)
+		if err := db.Create(&models.VehicleTypeConfig{VehicleType: vt, Enabled: true}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// seedDefaultSubscriptionPlans gives every vehicle type a starting
+// "daily" plan — enabled, priced at the same DRIVER_SUB_DAILY_FEE_KOBO
+// default the old day-rate system used, so existing deployments keep a
+// working subscription flow immediately after this migration — plus the
+// weekly/monthly/yearly cycles, seeded disabled with no price, for an
+// admin to turn on and price from the dashboard whenever they're ready.
+// Never overwrites a plan an admin has already configured.
+func seedDefaultSubscriptionPlans(db *gorm.DB, defaultDailyKobo int64) error {
+	vehicleTypes := []models.VehicleType{models.VehicleCar, models.VehicleOkada, models.VehicleKeke, models.VehicleBus}
+	for _, vt := range vehicleTypes {
+		for _, cycle := range models.AllBillingCycles {
+			var count int64
+			if err := db.Model(&models.SubscriptionPlan{}).
+				Where("vehicle_type = ? AND billing_cycle = ?", vt, cycle).
+				Count(&count).Error; err != nil {
+				return err
+			}
+			if count > 0 {
+				continue
+			}
+
+			plan := &models.SubscriptionPlan{VehicleType: vt, BillingCycle: cycle}
+			if cycle == models.BillingDaily {
+				plan.Enabled = true
+				plan.PriceKobo = defaultDailyKobo
+			}
+			log.Printf("migrate: seeding default subscription plan for %s/%s (enabled=%v)...", vt, cycle, plan.Enabled)
+			if err := db.Create(plan).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // seedDefaultSubscriptionPrices inserts a starting daily price for any
