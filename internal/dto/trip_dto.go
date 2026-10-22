@@ -137,12 +137,15 @@ type AcceptOfferResponse struct {
 // symmetric to NearbyDriverResponse's treatment of driver location before
 // a match exists.
 type NearbyOpenTripResponse struct {
-	TripID           string  `json:"trip_id"`
-	VehicleType      string  `json:"vehicle_type"`
-	PickupLat        float64 `json:"pickup_lat"`
-	PickupLng        float64 `json:"pickup_lng"`
-	DistanceKM       float64 `json:"distance_km"`
-	OfferedPriceKobo int64   `json:"offered_price_kobo"`
+	TripID             string  `json:"trip_id"`
+	VehicleType        string  `json:"vehicle_type"`
+	PickupLat          float64 `json:"pickup_lat"`
+	PickupLng          float64 `json:"pickup_lng"`
+	PickupAddress      string  `json:"pickup_address,omitempty"`
+	DestinationAddress string  `json:"destination_address,omitempty"`
+	DistanceKM         float64 `json:"distance_km"`
+	TripDistanceKM     float64 `json:"trip_distance_km"`
+	OfferedPriceKobo   int64   `json:"offered_price_kobo"`
 }
 
 // TripHistoryResponse is a page of a passenger's trips, newest first,

@@ -12,6 +12,7 @@ import (
 	"ridematch-backend/internal/models"
 	"ridematch-backend/internal/repository"
 	"ridematch-backend/internal/storage"
+	"ridematch-backend/internal/tracking"
 	"ridematch-backend/internal/utils"
 	"ridematch-backend/internal/ws"
 )
@@ -444,12 +445,15 @@ func (s *TripService) FindNearbyOpenTrips(ctx context.Context, vehicleType strin
 			continue
 		}
 		results = append(results, dto.NearbyOpenTripResponse{
-			TripID:           trip.ID,
-			VehicleType:      string(trip.VehicleType),
-			PickupLat:        roundTo(n.Latitude, s.coordinatePrecision),
-			PickupLng:        roundTo(n.Longitude, s.coordinatePrecision),
-			DistanceKM:       roundTo(n.DistanceKM, 2),
-			OfferedPriceKobo: trip.OfferedPriceKobo,
+			TripID:             trip.ID,
+			VehicleType:        string(trip.VehicleType),
+			PickupLat:          roundTo(n.Latitude, s.coordinatePrecision),
+			PickupLng:          roundTo(n.Longitude, s.coordinatePrecision),
+			PickupAddress:      trip.PickupAddress,
+			DestinationAddress: trip.DestinationAddress,
+			DistanceKM:         roundTo(n.DistanceKM, 2),
+			TripDistanceKM:     roundTo(tracking.HaversineMeters(trip.PickupLat, trip.PickupLng, trip.DestinationLat, trip.DestinationLng)/1000, 1),
+			OfferedPriceKobo:   trip.OfferedPriceKobo,
 		})
 	}
 	return results, nil
